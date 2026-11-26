@@ -252,3 +252,6 @@ progress { width: 100%; accent-color: var(--accent); }
   box-shadow: 0 0 0 0.5px var(--separator), 0 12px 32px rgba(0, 0, 0, 0.28);
 }
 .menu-panel label { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+
+.check-result { padding: 8px 0; border-bottom: 1px solid var(--separator); }
+.check-result:last-child { border-bottom: 0; }

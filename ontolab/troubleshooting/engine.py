@@ -9,7 +9,9 @@ graph, in the shape the ontology defines:
     SupportCase --HAS_CHECK_RESULT--> CheckResult --RESULT_OF--> CheckDefinition
     SupportCase --SELECTED_SOLUTION--> Solution
 
-Three decisions are made by code here, not by the model:
+Four decisions are made by code here, not by the model:
+  * a check result is accepted only when every step of the check has the
+    customer's reply stored (or an explicit reason why the step was skipped);
   * a check result must use a result code its check definition lists;
   * a symptom can be marked confirmed only when every one of its distinguishing
     conditions is met by recorded check results;
@@ -68,10 +70,22 @@ class TroubleshootingEngine:
     def _out(self, node_id: str, relationship: str) -> list[dict]:
         return self.store.get_neighbors(node_id, relationship, "out", 200)["neighbors"]
 
-    def _check_brief(self, check: dict) -> dict:
-        return {"check_id": check["node_id"], "name": check["canonical_name"], "question": check["properties"]["question"],
-                "method": check["properties"].get("method"), "possible_results": check["properties"]["possible_results"],
+    def _check_brief(self, check: dict, feedback: list[dict] | None = None) -> dict:
+        """A check as the agent works it: its steps in the authored order, each with the customer's reply if it has one.
+
+        The authored order is a recommendation. The agent chooses which pending step to give next.
+        """
+        given = {f["step"]: f for f in feedback or []}
+        steps = [{"step": n, "instruction": text, "status": "has_feedback" if n in given else "pending",
+                  **({"feedback": given[n]["feedback"]} if n in given else {})}
+                 for n, text in enumerate(check["properties"]["steps"], start=1)]
+        return {"check_id": check["node_id"], "name": check["canonical_name"], "steps": steps,
+                "pending_steps": [st["step"] for st in steps if st["status"] == "pending"],
+                "possible_results": check["properties"]["possible_results"],
                 "safety_note": check["properties"].get("safety_note")}
+
+    def _in_progress(self, case: dict) -> dict | None:
+        return case["properties"].get("check_in_progress") or None
 
     def list_symptoms(self) -> dict:
         symptoms = self.store.all_nodes(SYMPTOM)
@@ -219,8 +233,15 @@ class TroubleshootingEngine:
             + [a["assessment_id"] for a in assessments] + [c["symptom_id"] for a in assessments for c in a["candidates"]]
         edge_ids = [e for item in results + assessments for e in item["_edges"]]
         strip = lambda item: {k: v for k, v in item.items() if not k.startswith("_")}  # noqa: E731
+        progress = self._in_progress(case)
+        if progress:
+            check = self.store.get_object(progress["check_id"])
+            brief = self._check_brief(check, progress["feedback"])
+            progress = {"check_id": check["node_id"], "check": check["canonical_name"], "steps": brief["steps"],
+                        "pending_steps": brief["pending_steps"], "feedback": progress["feedback"]}
         return {
-            "case_id": case_id, "name": case["canonical_name"], **case["properties"],
+            "case_id": case_id, "name": case["canonical_name"],
+            **{k: v for k, v in case["properties"].items() if k != "check_in_progress"}, "check_in_progress": progress,
             "device": {"device_id": device[0]["node_id"], "name": device[0]["canonical_name"]} if device else None,
             "current_candidates": [{**c, "conditions": self._conditions(c["symptom_id"], facts)} for c in live],
             "confirmed_symptom": confirmed[0] if confirmed else None,
@@ -257,23 +278,73 @@ class TroubleshootingEngine:
                 self.store.add_edge(case_id, "INVOLVES_DEVICE", device_id)
             return self.case_state(case_id)
 
-    def record_check_result(self, case_id: str, check_id: str, result: str, evidence: str) -> dict:
+    def record_step_feedback(self, case_id: str, check_id: str, step: int, feedback: str) -> dict:
+        """Store the customer's reply to one step of a check. Steps may be taken in any order."""
         with self._lock:
-            self._open(case_id)
+            case = self._open(case_id)
+            check = self._require(check_id, CHECK)
+            steps = check["properties"]["steps"]
+            if not 1 <= step <= len(steps):
+                raise CaseError("unknown_step", f"{check['canonical_name']} has steps 1 to {len(steps)}; there is no step {step}.",
+                                steps=self._check_brief(check)["steps"])
+            progress = self._in_progress(case)
+            abandoned = None
+            if progress and progress["check_id"] != check_id:
+                abandoned, progress = progress["check_id"], None
+            collected = list(progress["feedback"]) if progress else []
+            replaced = any(f["step"] == step for f in collected)
+            collected = [f for f in collected if f["step"] != step]
+            collected.append({"step": step, "instruction": steps[step - 1], "feedback": feedback, "at": _now()})
+            self.store.update_properties(case_id, {"check_in_progress": {"check_id": check_id, "feedback": collected}})
+            brief = self._check_brief(check, collected)
+            out = {"recorded": {"check_id": check_id, "step": step, "feedback": feedback, "replaced_earlier_feedback": replaced},
+                   "steps": brief["steps"], "pending_steps": brief["pending_steps"],
+                   "provenance": {"node_ids": [case_id, check_id], "edge_ids": []}}
+            if abandoned:
+                out["warning"] = f"The unfinished check {abandoned} was dropped; its step feedback is discarded."
+            if brief["pending_steps"]:
+                out["next"] = ("Choose the pending step that makes most sense now, say only that one step, and wait for the reply. "
+                               "If what the customer reported already settles the check, record the result and say why the rest was skipped.")
+            else:
+                out["possible_results"] = check["properties"]["possible_results"]
+                out["next"] = ("All steps have feedback. Call record_check_result with the result code that fits what the customer "
+                               "reported. If the feedback fits none of the codes, ask the customer to clarify first.")
+            return out
+
+    def record_check_result(self, case_id: str, check_id: str, result: str, evidence: str,
+                            steps_skipped_because: str | None = None) -> dict:
+        with self._lock:
+            case = self._open(case_id)
             check = self._require(check_id, CHECK)
             valid = [r["code"] for r in check["properties"]["possible_results"]]
             if result not in valid:
                 raise CaseError("invalid_result_code", f"'{result}' is not a result of {check['canonical_name']}.",
                                 valid_results=check["properties"]["possible_results"])
+            steps = check["properties"]["steps"]
+            progress = self._in_progress(case)
+            collected = list(progress["feedback"]) if progress and progress["check_id"] == check_id else []
+            pending = [n for n in range(1, len(steps) + 1) if n not in {f["step"] for f in collected}]
+            if pending:
+                if not steps_skipped_because:
+                    raise CaseError(
+                        "steps_incomplete",
+                        f"{check['canonical_name']} still has {len(pending)} step(s) without customer feedback. Lead the customer "
+                        "through a pending step, or pass steps_skipped_because if those steps are not needed.",
+                        **{k: v for k, v in self._check_brief(check, collected).items() if k in ("steps", "pending_steps")})
+                collected += [{"step": n, "instruction": steps[n - 1], "feedback": None, "skipped_because": steps_skipped_because}
+                              for n in pending]
             number = case_id.split("_")[1]
             result_id = f"CR_{number}_{len(self._results(case_id)) + 1}"
             self.store.add_node(result_id, RESULT, f"Case {number} check: {check['canonical_name']}",
-                                properties={"result": result, "evidence": evidence, "executed_at": _now()})
+                                properties={"result": result, "evidence": evidence, "executed_at": _now(), "step_feedback": collected})
             self.store.add_edge(case_id, "HAS_CHECK_RESULT", result_id)
             self.store.add_edge(result_id, "RESULT_OF", check_id)
+            if progress and progress["check_id"] == check_id:
+                self.store.update_properties(case_id, {"check_in_progress": {}})
             state = self.case_state(case_id)
             label = next(r["label"] for r in check["properties"]["possible_results"] if r["code"] == result)
-            return {"recorded": {"result_id": result_id, "check_id": check_id, "result": result, "meaning": label},
+            return {"recorded": {"result_id": result_id, "check_id": check_id, "result": result, "meaning": label,
+                                 "steps_with_feedback": sum(1 for f in collected if f.get("feedback") is not None), "steps": len(steps)},
                     "effect_on_candidates": [{"symptom_id": c["symptom_id"], "name": c["name"], **c["conditions"]}
                                              for c in state["current_candidates"]],
                     "next": "Record a new assessment that reflects this result.", "provenance": state["provenance"]}
@@ -340,6 +411,13 @@ class TroubleshootingEngine:
         state = self.case_state(case_id)
         facts = self._facts(state["check_results"])
         live = state["current_candidates"]
+        progress = state["check_in_progress"]
+        if progress:
+            check = self.store.get_object(progress["check_id"])
+            return {"purpose": "finish the check in progress", "suggestion": self._check_brief(check, progress["feedback"]),
+                    "reason": (f"{check['canonical_name']} is under way: {len(progress['feedback'])} of {len(progress['steps'])} steps have feedback. "
+                               + ("Choose a pending step and say it." if progress["pending_steps"] else "All steps are done; record the check result.")),
+                    "provenance": state["provenance"]}
         if not live:
             return {"suggestion": None, "reason": "There is no assessment with live candidates yet. Call match_symptoms and record_assessment first.",
                     "provenance": state["provenance"]}
@@ -377,7 +455,9 @@ class TroubleshootingEngine:
             return {"purpose": "choose the solution", "suggestion": self._check_brief(check),
                     "from_checklist": {k: step[k] for k in ("checklist_id", "checklist", "role", "step")},
                     "reason": f"{confirmed['name']} is confirmed. This is the next check on its '{step['checklist']}' checklist that decides which solution applies.",
-                    "also_needed": needed[1:], "provenance": state["provenance"]}
+                    "other_checks_still_needed": [self._check_brief(self.store.get_object(c)) for c in needed[1:]],
+                    "order": "Advice only. You may do one of the other checks first if it suits the conversation better.",
+                    "provenance": state["provenance"]}
 
         ranked = []
         pending = {c["check"] for candidate in live for c in candidate["conditions"]["not_yet_checked"]}
@@ -395,7 +475,9 @@ class TroubleshootingEngine:
             "purpose": "narrow the candidates" if len(live) > 1 else "confirm the candidate",
             "suggestion": self._check_brief(self.store.get_object(check_id)), "if_the_result_is": options,
             "reason": f"Of the checks not yet done, this one rules out the most candidates on average ({eliminated:.1f} of {len(live)}).",
-            "alternatives": [{"check_id": c, "expected_eliminations": round(e, 2)} for e, _, c, _ in ranked[1:4]],
+            "alternatives": [{**self._check_brief(self.store.get_object(c)), "expected_eliminations": round(e, 2), "if_the_result_is": o}
+                             for e, _, c, o in ranked[1:4]],
+            "order": "Advice only. You may do an alternative first if it suits the conversation better.",
             "provenance": state["provenance"],
         }
 

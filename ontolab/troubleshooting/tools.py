@@ -29,6 +29,16 @@ class CheckResultArgs(BaseModel):
     check_id: str = Field(description="The check definition that was performed.")
     result: str = Field(description="One of that check's result codes.")
     evidence: str = Field(description="What the customer said or observed, as close to verbatim as possible.")
+    steps_skipped_because: str | None = Field(default=None, description=(
+        "Leave empty normally. Fill in when steps without feedback are not needed: the customer already gave the answer "
+        "unprompted, or an earlier reply settles the check. Say why. Those steps are stored as skipped with this reason."))
+
+
+class StepFeedbackArgs(BaseModel):
+    case_id: str
+    check_id: str = Field(description="The check the customer is being led through.")
+    step: int = Field(description="The number of the step the customer just replied to.")
+    feedback: str = Field(description="What the customer said in reply to that step, as close to verbatim as possible.")
 
 
 class Candidate(BaseModel):
@@ -55,7 +65,8 @@ class EscalateArgs(BaseModel):
     reason: str = Field(description="Why the case cannot be resolved here.")
 
 
-TOOL_NAMES = ("match_symptoms", "list_symptoms", "describe_symptom", "get_case", "suggest_next_check", "record_check_result",
+TOOL_NAMES = ("match_symptoms", "list_symptoms", "describe_symptom", "get_case", "suggest_next_check", "record_step_feedback",
+              "record_check_result",
               "record_assessment", "get_applicable_solutions", "select_solution", "escalate_case")
 
 
@@ -84,15 +95,23 @@ def register_troubleshooting_tools(registry: ToolRegistry, engine: Troubleshooti
                  lambda a: engine.case_state(a.case_id), read, "troubleshooting"),
         ToolSpec("suggest_next_check",
                  "Which check to do next, given the current candidates and what is already recorded: the one that rules out the "
-                 "most candidates, or once a symptom is confirmed, the one that decides the solution. Returns the question to ask "
-                 "and what each possible answer would mean.",
+                 "most candidates, or once a symptom is confirmed, the one that decides the solution. Each check comes with its spoken steps and "
+                 "which of them still need the customer's reply, plus what each final result would mean and alternative checks. "
+                 "The ranking and the step order are advice: you decide the order. If a check is under way it returns that check.",
                  CaseArgs, _out(suggestion={"type": ["object", "null"]}, if_the_result_is={"type": "array"}, reason={"type": "string"}),
                  lambda a: engine.suggest_next_check(a.case_id), decide, "troubleshooting"),
+        ToolSpec("record_step_feedback",
+                 "Store the customer's reply to the step you just gave them. Returns the check's steps with the ones still "
+                 "pending, so you can choose which to give next. Steps can be taken in any order, one per customer reply. "
+                 "When none are pending it lists the result codes.",
+                 StepFeedbackArgs, _out(recorded={"type": "object"}, pending_steps={"type": "array"}, next={"type": "string"}),
+                 lambda a: engine.record_step_feedback(a.case_id, a.check_id, a.step, a.feedback), write, "troubleshooting"),
         ToolSpec("record_check_result",
-                 "Record the outcome of a check the customer just performed or answered. The result must be one of the check's "
-                 "result codes. Record every answer, then record a new assessment.",
+                 "Record the outcome of a check. The result must be one of the check's result codes. It is rejected while steps "
+                 "lack customer feedback, unless you give steps_skipped_because. Then record a new assessment.",
                  CheckResultArgs, _out(recorded={"type": "object"}, effect_on_candidates={"type": "array"}),
-                 lambda a: engine.record_check_result(a.case_id, a.check_id, a.result, a.evidence), write, "troubleshooting"),
+                 lambda a: engine.record_check_result(a.case_id, a.check_id, a.result, a.evidence, a.steps_skipped_because),
+                 write, "troubleshooting"),
         ToolSpec("record_assessment",
                  "Record your current judgement of which symptom this is. It replaces the previous assessment, which is kept. "
                  "A symptom can be 'confirmed' only when all its distinguishing conditions are met by recorded check results; "

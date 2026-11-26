@@ -6,13 +6,20 @@ import { traceView } from './trace.js';
 import { graphView, graphLegend, typeStyles } from './graph.js';
 
 const WORKSPACE = 'troubleshooting';
-const EXAMPLES = ['My computer screen is dead', "There's a problem with my battery, it keeps running out of power",
-  'It is plugged in but the percentage never goes up', "It won't work"];
+const EXAMPLES = ['My computer screen is dead', "It won't start", 'It gets stuck on the Lenovo logo with the spinning circle',
+  'Everything takes ages to open', "There's a problem with my battery, it keeps running out of power", 'Is my laptop still under warranty?'];
 const view = { conversationId: null, caseId: null, turns: [], busy: false, draft: '', device: '', browsing: null, meta: null, error: null };
 
 const VERDICT_TONE = { confirmed: 'good', supported: 'accent', candidate: 'neutral', ruled_out: 'bad' };
 const STATUS_TONE = { resolved: 'good', in_progress: 'accent', escalated: 'warn', confirmed: 'good', narrowed: 'accent', candidates: 'neutral', superseded: 'neutral' };
 const pretty = (text) => String(text).replaceAll('_', ' ');
+
+// The order the agent actually took the steps in, shown only when it differs from the written order.
+function taken(feedback) {
+  const order = feedback.map((x) => x.step);
+  const reordered = order.some((n, i) => i > 0 && n < order[i - 1]);
+  return reordered ? h('p', { class: 'small muted' }, `Order chosen by the agent: ${order.join(', ')}`) : null;
+}
 
 function casePanel(state, live) {
   if (!state) {
@@ -44,10 +51,22 @@ function casePanel(state, live) {
       { label: 'Distinguishing conditions', render: conditions },
     ], state.current_candidates) : h('p', { class: 'muted' }, 'No assessment recorded yet.'),
 
+    state.check_in_progress ? h('div', {},
+      h('h3', { style: { marginTop: '12px' } }, 'Check in progress: ', state.check_in_progress.check,
+        h('span', { class: 'small muted' }, `  ${state.check_in_progress.feedback.length} of ${state.check_in_progress.steps.length} steps answered`)),
+      table([{ label: 'Step', render: (x) => String(x.step) }, { key: 'instruction', label: 'Agent says' },
+        { label: 'Customer reply', render: (x) => (x.status === 'has_feedback' ? x.feedback : h('span', { class: 'muted' }, 'waiting')) }],
+      state.check_in_progress.steps),
+      taken(state.check_in_progress.feedback)) : null,
+
     h('h3', { style: { marginTop: '12px' } }, `Check results (${state.check_results.length})`),
-    state.check_results.length ? table([
-      { key: 'check', label: 'Check' }, { label: 'Result', render: (r) => h('code', {}, r.result) }, { key: 'evidence', label: 'Evidence' },
-    ], state.check_results) : h('p', { class: 'muted' }, 'None yet.'),
+    state.check_results.length ? h('div', {}, state.check_results.map((r) => h('div', { class: 'check-result' },
+      h('div', {}, h('b', {}, r.check), ' ', h('code', {}, r.result), h('span', { class: 'small muted' }, `  ${r.evidence}`)),
+      (r.step_feedback || []).length ? details(`Steps and customer replies (${r.step_feedback.length})`, () => h('div', {},
+        table([{ label: 'Step', render: (x) => String(x.step) }, { key: 'instruction', label: 'Agent says' },
+          { label: 'Customer reply', render: (x) => (x.feedback ?? h('span', { class: 'muted' }, `skipped: ${x.skipped_because}`)) }],
+        [...r.step_feedback].sort((a, b) => a.step - b.step)), taken(r.step_feedback.filter((x) => x.feedback != null)))) : null)))
+      : h('p', { class: 'muted' }, 'None yet.'),
 
     h('h3', { style: { marginTop: '12px' } }, `Assessment history (${state.assessments.length})`),
     state.assessments.length ? h('ul', { class: 'timeline' }, [...state.assessments].reverse().map((a) =>
@@ -129,7 +148,7 @@ export function renderTroubleshooting(root, ctx) {
   const record = browsing ? casePanel(browsing, false) : casePanel(liveState, true);
 
   const stored = h('div', { class: 'card' }, h('h2', {}, 'Recorded cases'),
-    h('p', { class: 'small muted' }, 'The three example cases shipped with the ontology, plus every case opened here. Click one to read its record.'),
+    h('p', { class: 'small muted' }, 'The example cases shipped with the ontology, plus every case opened here. Click one to read its record.'),
     table([{ key: 'case_id', label: 'Case' }, { label: 'Status', render: (c) => h('span', { class: `badge ${STATUS_TONE[c.status] || 'neutral'}` }, pretty(c.status)) },
       { key: 'raw_description', label: 'Customer said' }, { label: 'Opened', render: (c) => (c.opened_at || '').replace('T', ' ') },
       { label: 'Origin', render: (c) => (c.source === 'runtime' ? 'lab' : 'example') }],
@@ -138,10 +157,11 @@ export function renderTroubleshooting(root, ctx) {
     h('div', { class: 'controls', style: { marginTop: '10px', marginBottom: 0 } },
       browsing ? h('button', { class: 'btn', onclick: () => { view.browsing = null; rerender(); } }, 'Back to the live case') : null,
       h('button', { class: 'btn', disabled: view.busy, title: 'Restore the ontology file: removes cases opened here',
-        onclick: async () => { await apiPost('/troubleshooting/reset'); view.meta = null; newCase(); } }, 'Reset to the three examples')));
+        onclick: async () => { await apiPost('/troubleshooting/reset'); view.meta = null; newCase(); } }, 'Reset to the example cases')));
 
   fill(root, h('h1', {}, 'Troubleshooting'),
-    h('p', { class: 'muted' }, `An agent works a support case on the diagram-based ontology (${meta.status.ontology.name} v${meta.status.ontology.version}, synthetic). `
+    h('p', { class: 'muted' }, `A Lenovo support agent works a hardware, software or warranty case on the diagram-based ontology (${meta.status.ontology.name} v${meta.status.ontology.version}; synthetic and illustrative, not official Lenovo guidance). `
+      + 'It simulates a voice agent: it leads the customer through each check one step per turn, choosing the order itself, and stores every reply. '
       + 'It may confirm a symptom only when recorded check results meet its conditions, and offer a solution only when its condition holds: both are enforced by code.'),
     ctx.status.llm.is_mock && !experiment.llmProvider ? banner('warn', 'The server is on the mock model, which cannot hold a troubleshooting conversation. Set an OpenAI model in .env.') : null,
     h('div', { class: 'grid two' }, conversation, record), stored,

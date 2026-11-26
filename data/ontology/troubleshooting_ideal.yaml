@@ -1,4 +1,10 @@
-# "Ideal data" troubleshooting ontology, modelled on the design diagram. ALL DATA IS SYNTHETIC.
+# "Ideal data" troubleshooting ontology for a Lenovo support POC, modelled on the design diagram.
+#
+# ALL DATA IS SYNTHETIC AND ILLUSTRATIVE. Lenovo product-line names are used to make the POC
+# concrete, but the device attributes, checks, conditions, solutions, warranty rules and cases
+# here are invented for demonstration. This is NOT official Lenovo support or warranty guidance.
+#
+# Scope: hardware problems, software problems, and warranty / entitlement.
 #
 # Two layers:
 #   knowledge (stable):        Device, Symptom, Checklist, CheckDefinition, Solution
@@ -18,8 +24,8 @@
 
 ontology:
   name: troubleshooting_ideal
-  version: "0.1.0"
-  description: Laptop troubleshooting ontology modelled on the design diagram, with ideal example data.
+  version: "0.3.0"
+  description: Lenovo laptop troubleshooting (hardware, software, warranty) modelled on the design diagram, with ideal example data. Synthetic and illustrative; not official Lenovo guidance.
   source: synthetic (designed from the diagram)
   synthetic: true
 
@@ -32,10 +38,11 @@ object_types:
       - {name: channel, type: string, description: "Contact channel: phone, chat or email."}
       - {name: opened_at, type: string, description: Time opened (ISO 8601).}
       - {name: closed_at, type: string, description: Time closed (ISO 8601).}
+      - {name: check_in_progress, type: object, description: "The check the customer is being led through right now: its id and the feedback collected for each step so far. Empty when no check is under way."}
   - name: Device
     description: The device model a case concerns.
     properties:
-      - {name: product_line, type: string, description: Product line.}
+      - {name: product_line, type: string, description: "Lenovo product line: ThinkPad, IdeaPad, Legion or Yoga."}
       - {name: release_year, type: number, description: Year the model was released.}
       - {name: removable_battery, type: boolean, description: Whether the customer can remove the battery without tools.}
       - {name: charger_wattage, type: number, description: Wattage of the bundled AC adapter.}
@@ -53,6 +60,7 @@ object_types:
       - {name: vague_expressions, type: list, description: "Common wording that is not enough to identify the symptom (it usually fits several symptoms)."}
       - {name: distinguishing_conditions, type: list, required: true, description: "List of {check, expect, note}: a check definition id and the result code it must have. All met = symptom confirmed."}
       - {name: severity, type: string, description: "low, medium, high or safety."}
+      - {name: category, type: string, required: true, description: "Area of support: hardware, software or warranty."}
   - name: Checklist
     description: The ordered checks for one symptom.
     properties:
@@ -62,6 +70,7 @@ object_types:
     description: A reusable check. How to ask, how to do it, and every result it can have.
     properties:
       - {name: question, type: string, required: true, description: Standard wording for asking the customer.}
+      - {name: steps, type: list, required: true, description: "The check as spoken steps, in the recommended order. The agent gives one step per turn and waits for the customer's reply; it may reorder or skip steps when the conversation calls for it."}
       - {name: method, type: string, description: How to perform the check.}
       - {name: possible_results, type: list, required: true, description: "Every possible result, as a list of {code, label}."}
       - {name: evidence_type, type: string, description: "customer_statement, customer_observation or system_reading."}
@@ -73,6 +82,7 @@ object_types:
       - {name: result, type: string, required: true, description: A result code listed by the check definition it is a result of.}
       - {name: evidence, type: string, required: true, description: "The customer's words or the observed fact."}
       - {name: executed_at, type: string, required: true, description: Time the check was performed (ISO 8601).}
+      - {name: step_feedback, type: list, description: "What the customer said at each step of the check, in the order the steps were taken, as a list of {step, instruction, feedback}. A skipped step has no feedback and a skipped_because reason."}
   - name: Solution
     description: Something that can be delivered to the customer to resolve the problem.
     properties:
@@ -105,7 +115,7 @@ relationship_types:
     source_types: [Symptom]
     target_types: [Checklist]
     properties:
-      - {name: role, type: string, description: "ADDITION, not in the diagram. What the checklist is for: triage (confirm the symptom), locate_cause (find what is wrong) or deeper (further or device-specific checks)."}
+      - {name: role, type: string, description: "ADDITION, not in the diagram. What the checklist is for: triage (confirm the symptom), locate_cause (find what is wrong), deeper (further or device-specific checks) or entitlement (warranty cover that a repair depends on)."}
       - {name: order, type: number, description: "ADDITION, not in the diagram. Order to work the symptom's checklists in; 1 first."}
       - {name: applies_when, type: string, description: "ADDITION, not in the diagram. Condition on the device's properties, e.g. removable_battery == true. Empty means it always applies."}
   - name: CONTAINS_CHECK
@@ -131,13 +141,19 @@ profile_recipes:
 
 nodes:
   # ============================== knowledge layer ==============================
-  # ---- devices ----
-  - {id: DEV_AIR13, type: Device, name: "AeroBook Air 13 (2023)", definition: "Thin and light laptop, charges over USB-C.", synonyms: [Air 13],
-     properties: {product_line: AeroBook Air, release_year: 2023, removable_battery: false, charger_wattage: 65}}
-  - {id: DEV_PRO16, type: Device, name: "AeroBook Pro 16 (2024)", definition: High-performance laptop with a discrete graphics chip., synonyms: [Pro 16],
-     properties: {product_line: AeroBook Pro, release_year: 2024, removable_battery: false, charger_wattage: 140}}
-  - {id: DEV_WORK15, type: Device, name: "WorkMate 15 (2022)", definition: Business laptop with a removable battery., synonyms: [WorkMate 15],
-     properties: {product_line: WorkMate, release_year: 2022, removable_battery: true, charger_wattage: 65}}
+  # ---- devices (Lenovo product lines; attributes are illustrative) ----
+  - {id: DEV_T14, type: Device, name: "ThinkPad T14 Gen 4", definition: Business laptop with a sealed internal battery., synonyms: [T14, ThinkPad T14],
+     properties: {product_line: ThinkPad, release_year: 2023, removable_battery: false, charger_wattage: 65}}
+  - {id: DEV_X1C, type: Device, name: "ThinkPad X1 Carbon Gen 11", definition: Thin and light premium business laptop., synonyms: [X1 Carbon, X1C],
+     properties: {product_line: ThinkPad, release_year: 2023, removable_battery: false, charger_wattage: 65}}
+  - {id: DEV_T480, type: Device, name: "ThinkPad T480", definition: Older business laptop with a removable rear battery., synonyms: [T480],
+     properties: {product_line: ThinkPad, release_year: 2018, removable_battery: true, charger_wattage: 65}}
+  - {id: DEV_SLIM5, type: Device, name: "IdeaPad Slim 5", definition: Consumer laptop for everyday use., synonyms: [IdeaPad Slim 5, Slim 5],
+     properties: {product_line: IdeaPad, release_year: 2023, removable_battery: false, charger_wattage: 65}}
+  - {id: DEV_LEGION5, type: Device, name: "Legion 5 Pro", definition: Gaming laptop with a discrete graphics chip and a high-wattage adapter., synonyms: [Legion 5, Legion],
+     properties: {product_line: Legion, release_year: 2023, removable_battery: false, charger_wattage: 300}}
+  - {id: DEV_YOGA7, type: Device, name: "Yoga 7", definition: Convertible 2-in-1 laptop with a touch screen., synonyms: [Yoga, Yoga 7i],
+     properties: {product_line: Yoga, release_year: 2023, removable_battery: false, charger_wattage: 65}}
 
   # ---- check definitions ----
   - id: CK_POWER_LED
@@ -147,6 +163,10 @@ nodes:
     properties:
       question: Please press the power button once. Does the power light on the laptop come on?
       method: With the adapter connected, press the power button once and watch for 5 seconds.
+      steps:
+        - "Please connect the charger to the laptop."
+        - "Now press the power button once."
+        - "Watch the laptop for about five seconds. Does the power light come on, or does it stay off?"
       possible_results: [{code: lit, label: The light comes on}, {code: "off", label: The light stays off}]
       evidence_type: customer_observation
       estimated_minutes: 1
@@ -157,6 +177,9 @@ nodes:
     properties:
       question: After pressing the power button, can you hear the fan spinning or a startup sound?
       method: Listen close to the underside or the air vent for 10 seconds.
+      steps:
+        - "Please press the power button once."
+        - "Put your ear close to the underside of the laptop, near the air vent, and listen for about ten seconds. Can you hear a fan spinning or a startup sound?"
       possible_results: [{code: heard, label: A fan or startup sound is heard}, {code: silent, label: No sound at all}]
       evidence_type: customer_observation
       estimated_minutes: 1
@@ -167,6 +190,10 @@ nodes:
     properties:
       question: Please look at the screen surface under a light. Are there any cracks, dark ink-like blotches or pressure marks?
       method: With the laptop off, shine a torch across the screen at an angle.
+      steps:
+        - "Please switch the laptop off."
+        - "Hold a torch or your phone light at an angle to the screen."
+        - "Look across the whole screen surface. Do you see any cracks, dark ink-like blotches or pressure marks?"
       possible_results: [{code: intact, label: No visible damage}, {code: damaged, label: "Cracks, blotches or pressure marks"}]
       evidence_type: customer_observation
       estimated_minutes: 2
@@ -177,6 +204,10 @@ nodes:
     properties:
       question: Please press the brightness-up key several times, then the display-switch key. Is there a picture now?
       method: Press brightness-up five times, then the display-switch key once.
+      steps:
+        - "Please press the brightness-up key five times. It has a small sun symbol on it."
+        - "Now press the display-switch key once. It shows a small screen symbol, usually on F7."
+        - "Is there a picture on the screen now?"
       possible_results: [{code: restored, label: The picture is back}, {code: no_change, label: No change}]
       evidence_type: customer_observation
       estimated_minutes: 1
@@ -187,6 +218,10 @@ nodes:
     properties:
       question: If you can, please connect an external monitor or a TV. Does it show a picture?
       method: Connect over HDMI or USB-C, then press the display-switch key.
+      steps:
+        - "Do you have an external monitor or a TV nearby that you can connect to the laptop?"
+        - "Please connect it with an HDMI or USB-C cable."
+        - "Now press the display-switch key once. Does the monitor or TV show a picture?"
       possible_results: [{code: external_ok, label: The external screen shows a picture}, {code: external_blank, label: The external screen is also blank}, {code: unavailable, label: No external screen available}]
       evidence_type: customer_observation
       estimated_minutes: 5
@@ -197,6 +232,9 @@ nodes:
     properties:
       question: Is the small light on the charger on?
       method: Plug the adapter into a wall outlet and look at its light.
+      steps:
+        - "Please plug the charger into a wall socket."
+        - "Look at the charger itself. Is there a small light on it, and is it on?"
       possible_results: [{code: lit, label: The light is on}, {code: "off", label: The light is off}, {code: no_led, label: This adapter has no light}]
       evidence_type: customer_observation
       estimated_minutes: 1
@@ -207,6 +245,10 @@ nodes:
     properties:
       question: With the charger plugged in, what does the battery icon say? Is the percentage going up?
       method: Connect the adapter, wait 2 minutes, then read the battery icon and percentage.
+      steps:
+        - "Please plug the charger into the laptop."
+        - "Wait about two minutes with the charger connected, and tell me when the time is up."
+        - "Look at the battery icon at the bottom right of the screen. What does it say, and is the percentage going up?"
       possible_results: [{code: charging, label: Charging and the percentage is rising}, {code: plugged_not_charging, label: Plugged in but the percentage is not rising}, {code: no_power_detected, label: No power source detected}]
       evidence_type: system_reading
       estimated_minutes: 3
@@ -217,6 +259,10 @@ nodes:
     properties:
       question: Do you have another charger of the same type that you know works? Does the laptop charge with it?
       method: Connect a known-good adapter of the same rating and watch for 2 minutes.
+      steps:
+        - "Do you have another charger of the same type that you know works?"
+        - "Please unplug your charger and connect the other one."
+        - "Wait about two minutes. Does the laptop charge with it?"
       possible_results: [{code: charges, label: Charges with the other adapter}, {code: still_not, label: Still does not charge}, {code: unavailable, label: No spare adapter available}]
       evidence_type: customer_observation
       estimated_minutes: 5
@@ -227,6 +273,11 @@ nodes:
     properties:
       question: Please unplug the charger and everything else, hold the power button for 30 seconds, then plug the charger back in and start the laptop. Is it working now?
       method: Disconnect the adapter and peripherals, hold the power button for 30 seconds, reconnect and power on.
+      steps:
+        - "Please unplug the charger and anything else connected to the laptop."
+        - "Now hold the power button down for thirty seconds, then let go."
+        - "Plug the charger back in."
+        - "Press the power button once. Is the laptop working now?"
       possible_results: [{code: fixed, label: Working normally again}, {code: no_change, label: No change}]
       evidence_type: customer_observation
       estimated_minutes: 4
@@ -238,6 +289,10 @@ nodes:
     properties:
       question: Please open the battery report. What health percentage does it show?
       method: Run the built-in battery diagnostic and read the health figure.
+      steps:
+        - "Please open Lenovo Vantage from the Start menu."
+        - "Choose Device, then Power, and find the battery details."
+        - "What battery health percentage does it show?"
       possible_results: [{code: healthy, label: Health 80% or above}, {code: degraded, label: Health below 80%}]
       evidence_type: system_reading
       estimated_minutes: 5
@@ -248,6 +303,8 @@ nodes:
     properties:
       question: After a full charge, roughly how long does the laptop last in normal use?
       method: Ask how long it lasted the last time it was fully charged.
+      steps:
+        - "After a full charge, roughly how long does the laptop last in normal use?"
       possible_results: [{code: normal, label: 4 hours or more}, {code: short, label: Under 2 hours}, {code: borderline, label: Between 2 and 4 hours}]
       evidence_type: customer_statement
       estimated_minutes: 1
@@ -259,6 +316,10 @@ nodes:
     properties:
       question: Please plug the charger straight into a different wall socket, without an extension lead. Does that change anything?
       method: Connect the adapter directly to another wall outlet, bypassing power strips, and retry.
+      steps:
+        - "Please unplug the charger from the wall, and from any extension lead."
+        - "Plug it straight into a different wall socket."
+        - "Now try the laptop again. Does that change anything?"
       possible_results: [{code: works, label: Works on the other outlet}, {code: no_change, label: No change}]
       evidence_type: customer_observation
       estimated_minutes: 2
@@ -269,6 +330,10 @@ nodes:
     properties:
       question: Please look into the charging port with a light. Is it clean, is there fluff or dirt inside, or does it look bent or loose?
       method: Shine a torch into the port and gently check whether the plug sits firmly.
+      steps:
+        - "Please unplug the charger from the laptop."
+        - "Shine a light into the charging port on the laptop. Is it clean, is there fluff or dirt inside, or does anything look bent?"
+        - "Now plug the charger back in gently. Does the plug sit firmly, or does it feel loose?"
       possible_results: [{code: clean, label: Clean and firm}, {code: debris, label: Fluff or dirt inside}, {code: damaged, label: "Bent, loose or burnt"}]
       evidence_type: customer_observation
       estimated_minutes: 3
@@ -280,6 +345,9 @@ nodes:
     properties:
       question: Please read the wattage printed on the charger label, a number followed by W. What does it say?
       method: Compare the wattage on the adapter label with the wattage the model requires.
+      steps:
+        - "Please find the label on the charger brick."
+        - "Look for a number followed by the letter W. What number does it say?"
       possible_results: [{code: matches, label: Same as or higher than required}, {code: lower, label: Lower than required}, {code: unreadable, label: Label missing or unreadable}]
       evidence_type: customer_observation
       estimated_minutes: 2
@@ -290,6 +358,10 @@ nodes:
     properties:
       question: Please open the battery settings. Is there a battery protection or charge limit option, and is it switched on?
       method: Open the system battery settings and look for a conservation mode or charge threshold.
+      steps:
+        - "Please open Lenovo Vantage from the Start menu."
+        - "Choose Device, then Power."
+        - "Is there a conservation mode or battery charge threshold option, and is it switched on?"
       possible_results: [{code: enabled, label: A charge limit is switched on}, {code: disabled, label: No charge limit is active}]
       evidence_type: system_reading
       estimated_minutes: 3
@@ -300,6 +372,9 @@ nodes:
     properties:
       question: Please unplug everything except the charger, including USB devices, docks and memory cards, then try to start it. Does it start?
       method: Disconnect all peripherals, leave only the adapter, and press the power button.
+      steps:
+        - "Please unplug everything except the charger. That includes USB devices, docks and memory cards."
+        - "Now press the power button once. Does the laptop start?"
       possible_results: [{code: starts, label: Starts with nothing connected}, {code: no_change, label: Still does not start}]
       evidence_type: customer_observation
       estimated_minutes: 3
@@ -310,6 +385,12 @@ nodes:
     properties:
       question: Please switch the laptop off, unplug it, slide the battery out, wait ten seconds and fit it back until it clicks. Any change?
       method: Power off, disconnect the adapter, remove the battery, wait 10 seconds and refit it firmly.
+      steps:
+        - "Please switch the laptop off."
+        - "Unplug the charger."
+        - "Slide the battery out of the laptop."
+        - "Wait about ten seconds, then fit the battery back in until it clicks."
+        - "Plug the charger back in and press the power button. Is there any change?"
       possible_results: [{code: fixed, label: Working normally again}, {code: no_change, label: No change}]
       evidence_type: customer_observation
       estimated_minutes: 4
@@ -321,6 +402,10 @@ nodes:
     properties:
       question: With the battery out, please look at its metal contacts. Are they clean and shiny, or dull, dirty or corroded?
       method: Remove the battery and inspect the contact strip on the battery and in the bay.
+      steps:
+        - "Please switch the laptop off and unplug the charger."
+        - "Slide the battery out."
+        - "Look at the metal contacts on the battery and inside the bay. Are they clean and shiny, or dull, dirty or corroded?"
       possible_results: [{code: clean, label: Clean and shiny}, {code: dirty, label: "Dull, dirty or corroded"}]
       evidence_type: customer_observation
       estimated_minutes: 3
@@ -332,6 +417,10 @@ nodes:
     properties:
       question: In a dim room, please shine a torch at the screen at an angle. Can you make out a very faint picture or text?
       method: With the laptop on, shine a torch close to the screen at an angle and look for a faint image.
+      steps:
+        - "Please make sure the laptop is switched on."
+        - "Dim the room lights if you can."
+        - "Hold a torch close to the screen at an angle. Can you make out a very faint picture or text?"
       possible_results: [{code: faint_image, label: A faint picture is visible}, {code: nothing, label: Nothing visible at all}]
       evidence_type: customer_observation
       estimated_minutes: 2
@@ -342,6 +431,9 @@ nodes:
     properties:
       question: Please press the Caps Lock key a few times. Does its little light turn on and off?
       method: Press Caps Lock several times and watch its indicator.
+      steps:
+        - "Please find the Caps Lock key on the left side of the keyboard."
+        - "Press it a few times. Does its little light turn on and off?"
       possible_results: [{code: toggles, label: The light turns on and off}, {code: no_response, label: The light does not react}, {code: no_indicator, label: This keyboard has no Caps Lock light}]
       evidence_type: customer_observation
       estimated_minutes: 1
@@ -352,6 +444,8 @@ nodes:
     properties:
       question: Do you know how it happened? For example was it dropped, was something pressed against it, or did liquid get on it?
       method: Ask the customer what happened shortly before the damage appeared.
+      steps:
+        - "Do you know how the damage happened? For example, was the laptop dropped, was something pressed against it, or did liquid get on it?"
       possible_results: [{code: impact, label: Dropped or knocked}, {code: pressure, label: "Something pressed on the lid or screen"}, {code: liquid, label: Liquid got on it}, {code: unknown, label: The customer does not know}]
       evidence_type: customer_statement
       estimated_minutes: 1
@@ -362,6 +456,9 @@ nodes:
     properties:
       question: Is there any sign that liquid got inside, such as stickiness around the keys, a smell, or moisture near the hinges?
       method: Look and feel around the keyboard, hinges and vents for residue or moisture.
+      steps:
+        - "Please look closely around the keyboard, the hinges and the air vents. Do you see any residue or moisture?"
+        - "Now gently touch the keys. Do any feel sticky, or is there an unusual smell?"
       possible_results: [{code: present, label: Signs of liquid}, {code: none, label: No sign of liquid}]
       evidence_type: customer_observation
       estimated_minutes: 2
@@ -373,6 +470,10 @@ nodes:
     properties:
       question: Please open the battery usage list. Is any single app using more than about a third of the battery?
       method: Open the system battery usage screen and read the top entry.
+      steps:
+        - "Please open Settings from the Start menu."
+        - "Choose System, then Power and battery, then Battery usage."
+        - "Look at the app at the top of the list. Is it using more than about a third of the battery?"
       possible_results: [{code: heavy_app, label: One app uses a third or more}, {code: none, label: No single app stands out}]
       evidence_type: system_reading
       estimated_minutes: 3
@@ -383,9 +484,216 @@ nodes:
     properties:
       question: In the battery settings, which power mode is selected?
       method: Open the system power settings and read the selected mode.
+      steps:
+        - "Please open Settings from the Start menu."
+        - "Choose System, then Power and battery."
+        - "Which power mode is selected?"
       possible_results: [{code: performance, label: Best performance}, {code: balanced, label: Balanced}, {code: saver, label: Battery saver}]
       evidence_type: system_reading
       estimated_minutes: 2
+
+  # ---- software checks ----
+  - id: CK_BOOT_COMPLETES
+    type: CheckDefinition
+    name: Reaches the Windows desktop
+    definition: "Whether the laptop gets all the way to the Windows desktop after it is switched on."
+    properties:
+      question: "When you switch it on, does it get all the way to your Windows desktop, or does it stop at the logo, a spinning circle or an error screen?"
+      method: "Power on and wait up to five minutes without touching anything."
+      steps:
+        - "Please switch the laptop on."
+        - "Leave it alone for up to five minutes without touching anything, and tell me what you see."
+        - "Did it get all the way to your Windows desktop, or did it stop at the logo, a spinning circle or an error screen?"
+      possible_results: [{code: "desktop", label: "Reaches the desktop"}, {code: "stuck_or_error", label: "Stops at the logo, keeps restarting or shows an error screen"}]
+      evidence_type: customer_observation
+      estimated_minutes: 5
+  - id: CK_RECENT_CHANGE
+    type: CheckDefinition
+    name: Recent change
+    definition: "What changed on the laptop shortly before the problem started."
+    properties:
+      question: "Did this start right after something changed, such as a Windows update, a newly installed program or a new device being plugged in?"
+      method: "Ask what happened in the day or two before the problem appeared."
+      steps:
+        - "Did this start right after something changed, such as a Windows update, a newly installed program or a new device being plugged in?"
+      possible_results: [{code: "windows_update", label: "A Windows or driver update"}, {code: "new_software", label: "A newly installed program"}, {code: "new_hardware", label: "A new device was connected"}, {code: "nothing", label: "Nothing the customer knows of"}]
+      evidence_type: customer_statement
+      estimated_minutes: 1
+  - id: CK_STARTUP_REPAIR
+    type: CheckDefinition
+    name: Automatic startup repair
+    definition: "The result of the Windows automatic startup repair."
+    properties:
+      question: "Please switch the laptop on and off three times in a row to bring up the repair screen, then choose Startup Repair. What does it say when it finishes?"
+      method: "Interrupt startup three times to enter the recovery environment, then run Startup Repair."
+      steps:
+        - "Please switch the laptop on, and as soon as you see the logo, hold the power button until it turns off."
+        - "Please do that two more times. On the next start a repair screen should appear. Do you see it?"
+        - "Choose Troubleshoot, then Advanced options, then Startup Repair."
+        - "Let it run until it finishes. What does it say?"
+      possible_results: [{code: "repaired", label: "Windows starts normally afterwards"}, {code: "could_not_repair", label: "It says it could not repair the PC"}, {code: "not_offered", label: "The repair screen never appears"}]
+      evidence_type: customer_observation
+      estimated_minutes: 12
+  - id: CK_SAFE_MODE
+    type: CheckDefinition
+    name: Starts in safe mode
+    definition: "Whether Windows starts when only its essential components are loaded."
+    properties:
+      question: "From the repair screen, please choose Troubleshoot, Advanced options, Startup Settings, and restart in Safe Mode. Does Windows start that way?"
+      method: "Boot into Safe Mode from the recovery environment."
+      steps:
+        - "From the repair screen, please choose Troubleshoot, then Advanced options."
+        - "Choose Startup Settings, then Restart."
+        - "When the list appears, press the 4 key for Safe Mode. Does Windows start that way?"
+      possible_results: [{code: "starts", label: "Starts in safe mode"}, {code: "fails", label: "Fails in safe mode too"}]
+      evidence_type: customer_observation
+      estimated_minutes: 8
+  - id: CK_STORAGE_DIAG
+    type: CheckDefinition
+    name: Storage drive diagnostic
+    definition: "The result of the built-in hardware diagnostic for the storage drive."
+    properties:
+      question: "Please restart and press F10 as it starts to open the built-in diagnostics, then run the storage test. Does it pass or fail?"
+      method: "Run the pre-boot diagnostics storage test."
+      steps:
+        - "Please restart the laptop."
+        - "As it starts, press the F10 key several times until the diagnostics screen opens. Do you see it?"
+        - "Choose the storage test and let it run. Does it pass or fail?"
+      possible_results: [{code: "pass", label: "The storage test passes"}, {code: "fail", label: "The storage test fails"}]
+      evidence_type: system_reading
+      estimated_minutes: 10
+  - id: CK_SLOW_SCOPE
+    type: CheckDefinition
+    name: Scope of the slowness
+    definition: "Whether the laptop is slow in general or only in one program."
+    properties:
+      question: "Is the laptop slow with everything you do, or only in one particular program?"
+      method: "Ask which activities are slow."
+      steps:
+        - "Is the laptop slow with everything you do, or only in one particular program?"
+      possible_results: [{code: "always", label: "Slow in general"}, {code: "one_app", label: "Only in one program"}]
+      evidence_type: customer_statement
+      estimated_minutes: 1
+  - id: CK_TASK_MANAGER
+    type: CheckDefinition
+    name: Resource usage
+    definition: "Which resource Task Manager shows as heavily used."
+    properties:
+      question: "Please press Ctrl, Shift and Esc together to open Task Manager and look at the Performance tab. Is the processor, the memory or the disk close to 100%?"
+      method: "Open Task Manager and read CPU, Memory and Disk usage while the laptop is idle."
+      steps:
+        - "Please close the programs you have open, and wait a minute."
+        - "Press Control, Shift and Escape together to open Task Manager."
+        - "Choose the Performance tab. Is the processor, the memory or the disk close to one hundred percent?"
+      possible_results: [{code: "cpu_high", label: "Processor near 100%"}, {code: "memory_high", label: "Memory near 100%"}, {code: "disk_high", label: "Disk near 100%"}, {code: "normal", label: "Nothing is heavily used"}]
+      evidence_type: system_reading
+      estimated_minutes: 3
+  - id: CK_STARTUP_APPS
+    type: CheckDefinition
+    name: Startup programs
+    definition: "How many programs are set to start with Windows."
+    properties:
+      question: "In Task Manager, please open the Startup apps tab. Roughly how many are switched on?"
+      method: "Count the enabled entries on the Startup apps tab."
+      steps:
+        - "Please press Control, Shift and Escape together to open Task Manager."
+        - "Choose the Startup apps tab."
+        - "Roughly how many of the apps in the list are switched on?"
+      possible_results: [{code: "many", label: "Ten or more enabled"}, {code: "few", label: "Fewer than ten enabled"}]
+      evidence_type: system_reading
+      estimated_minutes: 2
+  - id: CK_STORAGE_FREE
+    type: CheckDefinition
+    name: Free storage space
+    definition: "How much free space is left on the system drive."
+    properties:
+      question: "Please open This PC in File Explorer. Is the bar for the C drive red or nearly full?"
+      method: "Read the free space on the system drive."
+      steps:
+        - "Please open File Explorer and choose This PC."
+        - "Look at the bar under the C drive. Is it red or nearly full?"
+      possible_results: [{code: "low", label: "Less than 10% free"}, {code: "ok", label: "10% or more free"}]
+      evidence_type: system_reading
+      estimated_minutes: 2
+  - id: CK_MALWARE_SCAN
+    type: CheckDefinition
+    name: Security scan
+    definition: "The result of a full scan with the built-in security software."
+    properties:
+      question: "Please open Windows Security and run a full scan. When it finishes, does it report any threats?"
+      method: "Run a full scan in Windows Security."
+      steps:
+        - "Please open Windows Security from the Start menu."
+        - "Choose Virus and threat protection, then Scan options."
+        - "Select Full scan and start it. It can take a while, so tell me when it finishes."
+        - "Does it report any threats?"
+      possible_results: [{code: "threats_found", label: "Threats were found"}, {code: "clean", label: "No threats found"}]
+      evidence_type: system_reading
+      estimated_minutes: 30
+  - id: CK_SYSTEM_UPDATE
+    type: CheckDefinition
+    name: Pending system updates
+    definition: "Whether Windows Update or Lenovo Vantage System Update has updates waiting."
+    properties:
+      question: "Please open Lenovo Vantage and choose System Update, and also check Windows Update. Are any updates waiting to be installed?"
+      method: "Check for updates in Lenovo Vantage and in Windows Update."
+      steps:
+        - "Please open Lenovo Vantage and choose System Update, then Check for updates. Are any updates listed?"
+        - "Now open Settings and choose Windows Update. Are any updates waiting there?"
+      possible_results: [{code: "updates_pending", label: "Updates are waiting"}, {code: "up_to_date", label: "Everything is up to date"}]
+      evidence_type: system_reading
+      estimated_minutes: 5
+
+  # ---- warranty and entitlement checks ----
+  - id: CK_WARRANTY_STATUS
+    type: CheckDefinition
+    name: Warranty status
+    definition: "Whether the laptop is within its warranty period, looked up by serial number."
+    properties:
+      question: "Could you read me the serial number from the label on the underside of the laptop, so the warranty can be checked?"
+      method: "Look up the serial number in the warranty system. In this POC the status is supplied by the person playing the customer."
+      steps:
+        - "Please turn the laptop over and find the label on the underside."
+        - "Could you read me the serial number? It comes after the letters S and N."
+      possible_results: [{code: "in_warranty", label: "Within the warranty period"}, {code: "expired", label: "The warranty has expired"}, {code: "not_found", label: "The serial number is not found"}]
+      evidence_type: system_reading
+      estimated_minutes: 3
+  - id: CK_WARRANTY_TYPE
+    type: CheckDefinition
+    name: Warranty service level
+    definition: "Which service level the warranty provides."
+    properties:
+      question: "Do you know which warranty service you have, for example depot repair, on-site repair or Premier Support?"
+      method: "Read the service level from the warranty lookup."
+      steps:
+        - "Do you know which warranty service you have? For example depot repair, on-site repair or Premier Support."
+      possible_results: [{code: "depot", label: "Depot or carry-in repair"}, {code: "onsite", label: "On-site repair"}, {code: "premier", label: "Premier Support"}]
+      evidence_type: system_reading
+      estimated_minutes: 2
+  - id: CK_ADP_COVER
+    type: CheckDefinition
+    name: Accidental damage cover
+    definition: "Whether the laptop has Accidental Damage Protection, which covers drops, spills and cracked screens."
+    properties:
+      question: "Was Accidental Damage Protection bought with the laptop or added to the warranty?"
+      method: "Read the accidental damage entitlement from the warranty lookup."
+      steps:
+        - "Was Accidental Damage Protection bought with the laptop, or added to the warranty later?"
+      possible_results: [{code: "covered", label: "Accidental damage is covered"}, {code: "not_covered", label: "Accidental damage is not covered"}]
+      evidence_type: system_reading
+      estimated_minutes: 2
+  - id: CK_PROOF_OF_PURCHASE
+    type: CheckDefinition
+    name: Proof of purchase
+    definition: "Whether the customer can provide an invoice or receipt showing the purchase date."
+    properties:
+      question: "Do you have the invoice or receipt showing when the laptop was bought?"
+      method: "Ask whether a dated invoice or receipt is available."
+      steps:
+        - "Do you have the invoice or receipt showing when the laptop was bought?"
+      possible_results: [{code: "available", label: "An invoice or receipt is available"}, {code: "unavailable", label: "No proof of purchase"}]
+      evidence_type: customer_statement
+      estimated_minutes: 1
 
   # ---- checklists (each symptom has two or three, with different roles) ----
   - {id: CL_NO_POWER_TRIAGE, type: Checklist, name: No Power Triage, definition: Establish whether the laptop is getting any power at all., properties: {purpose: Tell "no power" apart from "powered but no picture", owner: Power Team}}
@@ -403,6 +711,16 @@ nodes:
   - {id: CL_BATTERY_DRAIN_USAGE, type: Checklist, name: Short Battery Life Usage and Health, definition: Check battery wear and what is using the power., properties: {purpose: Tell battery wear apart from usage and settings, owner: Power Team}}
   - {id: CL_REMOVABLE_BATTERY, type: Checklist, name: Removable Battery Checks, definition: Extra checks that are only possible when the customer can take the battery out., properties: {purpose: Rule out a poorly seated battery or dirty contacts, owner: Power Team}}
 
+  - {id: CL_WARRANTY_ENTITLEMENT, type: Checklist, name: Warranty Entitlement, definition: Establish whether a repair or part shipment is covered before offering it., properties: {purpose: Decide between a covered repair and a paid repair quote, owner: Entitlement Team}}
+  - {id: CL_OS_START_TRIAGE, type: Checklist, name: Windows Start Triage, definition: Establish that the laptop has power and a picture but never reaches the desktop., properties: {purpose: Tell a Windows start failure apart from no power and from a black screen, owner: Software Team}}
+  - {id: CL_OS_START_RECOVERY, type: Checklist, name: Windows Start Recovery, definition: Find what stops Windows starting and try the built-in recovery., properties: {purpose: "Locate the cause: an update, a program, or damaged system files", owner: Software Team}}
+  - {id: CL_OS_START_HARDWARE, type: Checklist, name: Windows Start Hardware Checks, definition: Rule out an attached device or a failing drive behind the start failure., properties: {purpose: Tell a software fault apart from a hardware fault, owner: Software Team}}
+  - {id: CL_SLOW_TRIAGE, type: Checklist, name: Slow Performance Triage, definition: Establish that Windows starts and the slowness is general., properties: {purpose: Tell general slowness apart from a start failure or one misbehaving program, owner: Software Team}}
+  - {id: CL_SLOW_RESOURCES, type: Checklist, name: Slow Performance Resources, definition: "Find which resource is exhausted: processor, memory, disk or storage space.", properties: {purpose: Locate what is using the laptop's resources, owner: Software Team}}
+  - {id: CL_SLOW_SYSTEM_HEALTH, type: Checklist, name: Slow Performance System Health, definition: "Check updates, security and power settings.", properties: {purpose: Rule out outdated software and unwanted programs, owner: Software Team}}
+  - {id: CL_WARRANTY_LOOKUP, type: Checklist, name: Warranty Lookup, definition: Establish whether the laptop is within warranty., properties: {purpose: Answer whether the laptop is covered, owner: Entitlement Team}}
+  - {id: CL_WARRANTY_COVER, type: Checklist, name: Warranty Cover Details, definition: Establish what the warranty includes., properties: {purpose: Answer what is covered and how service is delivered, owner: Entitlement Team}}
+
   # ---- standard symptoms ----
   - id: S_NO_POWER
     type: Symptom
@@ -416,6 +734,7 @@ nodes:
         - {check: CK_POWER_LED, expect: "off", note: No indicator light means the laptop is not getting power}
         - {check: CK_FAN_SOUND, expect: silent, note: No fan sound rules out "powered but no picture"}
       severity: high
+      category: hardware
   - id: S_BLACK_SCREEN
     type: Symptom
     name: Black Screen
@@ -428,6 +747,7 @@ nodes:
         - {check: CK_POWER_LED, expect: lit, note: "The light is on, so the laptop has power"}
         - {check: CK_SCREEN_PHYSICAL, expect: intact, note: An undamaged screen rules out physical damage}
       severity: high
+      category: hardware
   - id: S_SCREEN_DAMAGE
     type: Symptom
     name: Physical Screen Damage
@@ -439,6 +759,7 @@ nodes:
       distinguishing_conditions:
         - {check: CK_SCREEN_PHYSICAL, expect: damaged, note: Visible damage is enough to confirm}
       severity: high
+      category: hardware
   - id: S_NOT_CHARGING
     type: Symptom
     name: Laptop Not Charging
@@ -450,6 +771,7 @@ nodes:
       distinguishing_conditions:
         - {check: CK_CHARGE_ICON, expect: plugged_not_charging, note: The system sees the adapter but the percentage does not rise}
       severity: medium
+      category: hardware
   - id: S_BATTERY_DRAIN
     type: Symptom
     name: Short Battery Life
@@ -462,6 +784,44 @@ nodes:
         - {check: CK_CHARGE_ICON, expect: charging, note: "It charges normally, which rules out not charging"}
         - {check: CK_RUNTIME, expect: short, note: Under 2 hours on a full charge}
       severity: low
+      category: hardware
+  - id: S_OS_WONT_START
+    type: Symptom
+    name: Windows Won't Start
+    definition: "The laptop has power and shows a picture, but stops at the logo, keeps restarting or shows an error and never reaches the Windows desktop."
+    synonyms: [won't boot, stuck on the logo, boot loop, keeps restarting, blue screen at startup]
+    properties:
+      typical_expressions: ["It gets stuck on the Lenovo logo with the spinning circle", "It keeps restarting and never gets to my desktop"]
+      vague_expressions: [it won't work, my laptop is broken, it won't start]
+      distinguishing_conditions:
+        - {check: CK_POWER_LED, expect: lit, note: "The light is on, so this is not a power problem"}
+        - {check: CK_BOOT_COMPLETES, expect: stuck_or_error, note: "It shows a picture but never reaches the desktop"}
+      severity: high
+      category: software
+  - id: S_SLOW_PERFORMANCE
+    type: Symptom
+    name: Slow Performance
+    definition: Windows starts normally but the laptop is slow in general.
+    synonyms: [running slow, laggy, sluggish, takes forever, freezes a lot]
+    properties:
+      typical_expressions: ["Everything takes ages to open, even the file explorer", "It has become really slow over the last few weeks"]
+      vague_expressions: [my laptop is broken, it is not working properly, it is acting up]
+      distinguishing_conditions:
+        - {check: CK_BOOT_COMPLETES, expect: desktop, note: "Windows starts, which rules out a start failure"}
+        - {check: CK_SLOW_SCOPE, expect: always, note: "Slow in general, not in a single program"}
+      severity: low
+      category: software
+  - id: S_WARRANTY_INQUIRY
+    type: Symptom
+    name: Warranty Status Inquiry
+    definition: "The customer wants to know whether the laptop is covered and what the cover includes. A request type, not a fault, so it has no distinguishing conditions."
+    synonyms: [warranty check, warranty question, is it covered, warranty lookup]
+    properties:
+      typical_expressions: ["Is my laptop still under warranty?", "What does my warranty cover?"]
+      vague_expressions: [can you fix it for free, do I have to pay for this]
+      distinguishing_conditions: []
+      severity: low
+      category: warranty
 
   # ---- solutions ----
   - {id: SOL_POWER_RESET, type: Solution, name: Power Reset, definition: Drain residual charge to clear a protective lock-up of the main board., properties: {solution_type: remote_guidance, estimated_minutes: 5, steps: [Unplug the adapter and all peripherals, Hold the power button for 30 seconds, Reconnect the adapter and power on]}}
@@ -480,6 +840,21 @@ nodes:
   - {id: SOL_CLEAN_BATTERY_CONTACTS, type: Solution, name: Clean the Battery Contacts, definition: Dirty contacts on a removable battery give a poor connection., properties: {solution_type: remote_guidance, estimated_minutes: 6, steps: [Switch the laptop off and remove the battery, Wipe the contacts with a dry lint-free cloth, Refit the battery until it clicks]}}
   - {id: SOL_REPAIR_LIQUID, type: Solution, name: Depot Repair for Liquid Damage, definition: Liquid has entered the laptop and the whole unit needs inspection., properties: {solution_type: depot_repair, estimated_minutes: 8, steps: [Tell the customer to switch off and not charge the laptop, Create a depot repair order marked liquid damage, Explain that liquid damage may not be covered by warranty]}}
 
+  - {id: SOL_PAID_REPAIR_QUOTE, type: Solution, name: Paid Repair Quote, definition: "The repair is needed but not covered, so the customer is offered a quote before any work.", properties: {solution_type: depot_repair, estimated_minutes: 8, steps: [Explain that the repair is not covered and why, Provide a repair quote, Create the repair order only if the customer accepts]}}
+  - {id: SOL_STARTUP_REPAIR, type: Solution, name: Windows Startup Repair, definition: The built-in startup repair fixed the start failure., properties: {solution_type: remote_guidance, estimated_minutes: 15, steps: [Run Startup Repair from the recovery screen, Let Windows restart, Install pending updates once the desktop loads]}}
+  - {id: SOL_UNINSTALL_UPDATE, type: Solution, name: Uninstall the Latest Update, definition: A recent Windows or driver update is stopping Windows from starting., properties: {solution_type: remote_guidance, estimated_minutes: 20, steps: [Start in safe mode, Uninstall the most recent quality or driver update, Restart and pause updates for a week]}}
+  - {id: SOL_REMOVE_SOFTWARE, type: Solution, name: Remove the Recently Installed Program, definition: A newly installed program is stopping Windows from starting., properties: {solution_type: remote_guidance, estimated_minutes: 15, steps: [Start in safe mode, Uninstall the program added just before the problem, Restart normally]}}
+  - {id: SOL_RESET_WINDOWS, type: Solution, name: Reset Windows Keeping Files, definition: "System files are damaged and repair failed; a reset reinstalls Windows while keeping personal files.", properties: {solution_type: remote_guidance, estimated_minutes: 60, steps: [Open the recovery screen and choose Reset this PC, Choose Keep my files, Reinstall programs afterwards]}}
+  - {id: SOL_REPAIR_STORAGE, type: Solution, name: Depot Repair for Storage Drive, definition: The storage drive fails its diagnostic and must be replaced at the depot., properties: {solution_type: depot_repair, estimated_minutes: 8, steps: [Check warranty status, Create a depot repair order, Warn that data on the drive may not be recoverable]}}
+  - {id: SOL_CLOSE_HEAVY_PROCESS, type: Solution, name: Stop the Heavy Process, definition: One process is using most of the processor or memory., properties: {solution_type: remote_guidance, estimated_minutes: 6, steps: [Sort Task Manager by the busy resource, End or uninstall the process at the top, Restart the laptop]}}
+  - {id: SOL_DISABLE_STARTUP_APPS, type: Solution, name: Reduce Startup Programs, definition: Too many programs start with Windows., properties: {solution_type: remote_guidance, estimated_minutes: 8, steps: [Open the Startup apps tab in Task Manager, Disable programs that are not needed at startup, Restart the laptop]}}
+  - {id: SOL_FREE_STORAGE, type: Solution, name: Free Up Storage Space, definition: The system drive is nearly full., properties: {solution_type: remote_guidance, estimated_minutes: 12, steps: [Run Storage Sense or Disk Cleanup, Remove large files and unused programs, Keep at least 15% of the drive free]}}
+  - {id: SOL_REMOVE_MALWARE, type: Solution, name: Remove Detected Threats, definition: The security scan found unwanted software., properties: {solution_type: remote_guidance, estimated_minutes: 20, steps: [Choose Remove for every detected threat, Restart and run an offline scan, Change passwords used on the laptop]}}
+  - {id: SOL_INSTALL_UPDATES, type: Solution, name: Install Pending Updates, definition: Windows or Lenovo system updates are waiting., properties: {solution_type: remote_guidance, estimated_minutes: 30, steps: [Install the updates in Lenovo Vantage System Update, Install the updates in Windows Update, Restart when asked]}}
+  - {id: SOL_CONFIRM_COVERAGE, type: Solution, name: Confirm Warranty Cover, definition: "The laptop is within warranty; explain what the cover includes.", properties: {solution_type: remote_guidance, estimated_minutes: 4, steps: [Tell the customer the laptop is within warranty, Explain the service level and how service is delivered, Say whether accidental damage is included]}}
+  - {id: SOL_OFFER_EXTENSION, type: Solution, name: Offer Warranty Extension or Paid Service, definition: The warranty has expired., properties: {solution_type: remote_guidance, estimated_minutes: 5, steps: [Tell the customer the warranty has expired, Explain the options to extend cover or pay for a repair, Send the options in writing]}}
+  - {id: SOL_VERIFY_SERIAL, type: Solution, name: Verify Serial Number and Purchase, definition: The serial number is not found in the warranty system., properties: {solution_type: remote_guidance, estimated_minutes: 6, steps: [Read the serial number again from the label, Ask for the proof of purchase, Pass both to the entitlement team to correct the record]}}
+
   # ============================== case layer (ideal examples) ==============================
   # ---- case 1: vague description -> narrowed step by step -> confirmed ----
   - {id: CASE_001, type: SupportCase, name: "Case 001: screen shows nothing", definition: "A vague description, confirmed as Black Screen over three assessments.",
@@ -494,6 +869,8 @@ nodes:
   - {id: AS_001_3, type: SymptomAssessment, name: Case 001 assessment 3, definition: "Confirmed: Black Screen, with the fault on the built-in display side.",
      properties: {sequence: 3, status: confirmed, evidence: "Both distinguishing conditions of Black Screen are met; the external screen works, so the laptop and its graphics are fine.", assessed_at: "2026-03-02T09:25:00"}}
 
+  - {id: CR_001_4, type: CheckResult, name: "Case 001 check 4: warranty status", properties: {result: in_warranty, evidence: "Serial number checked: warranty runs for another 14 months.", executed_at: "2026-03-02T09:28:00"}}
+
   # ---- case 2: clear description -> one check confirms the symptom, the checklist locates the cause ----
   - {id: CASE_002, type: SupportCase, name: "Case 002: plugged in, not charging", definition: "A clear description, confirmed as Not Charging with one check.",
      properties: {raw_description: "The charger is plugged in and it says plugged in, but the battery has been stuck at 40% and won't go up", status: resolved, channel: chat, opened_at: "2026-03-03T14:02:00", closed_at: "2026-03-03T14:15:00"}}
@@ -505,6 +882,8 @@ nodes:
   - {id: CR_002_2, type: CheckResult, name: "Case 002 check 2: adapter indicator light", properties: {result: lit, evidence: "Customer: the light on the charger is on.", executed_at: "2026-03-03T14:07:00"}}
   - {id: CR_002_3, type: CheckResult, name: "Case 002 check 3: spare adapter test", properties: {result: charges, evidence: "Customer: it started charging as soon as I used my colleague's charger.", executed_at: "2026-03-03T14:11:00"}}
 
+  - {id: CR_002_4, type: CheckResult, name: "Case 002 check 4: warranty status", properties: {result: in_warranty, evidence: "Serial number checked: within warranty.", executed_at: "2026-03-03T14:13:00"}}
+
   # ---- case 3: first judgement wrong -> overturned by a check result -> revised ----
   - {id: CASE_003, type: SupportCase, name: "Case 003: battery problem", definition: "First judged as Not Charging, then revised to Short Battery Life when a check result contradicted it.",
      properties: {raw_description: "There's a problem with my battery, it keeps running out of power", status: resolved, channel: phone, opened_at: "2026-03-05T10:20:00", closed_at: "2026-03-05T10:44:00"}}
@@ -515,6 +894,28 @@ nodes:
   - {id: AS_003_2, type: SymptomAssessment, name: Case 003 assessment 2, definition: "Revised: Short Battery Life. The earlier lean towards Not Charging is ruled out.",
      properties: {sequence: 2, status: confirmed, evidence: "It charges normally, which rules out Not Charging; under 2 hours on a full charge meets every distinguishing condition of Short Battery Life.", assessed_at: "2026-03-05T10:28:00"}}
   - {id: CR_003_3, type: CheckResult, name: "Case 003 check 3: battery health reading", properties: {result: degraded, evidence: "Customer reads from the battery report: health 61%.", executed_at: "2026-03-05T10:35:00"}}
+  - {id: CR_003_4, type: CheckResult, name: "Case 003 check 4: warranty status", properties: {result: expired, evidence: "Serial number checked: the warranty ended in 2021.", executed_at: "2026-03-05T10:39:00"}}
+
+  # ---- case 4 (software): clear description -> cause located -> remote fix, no warranty needed ----
+  - {id: CASE_004, type: SupportCase, name: "Case 004: stuck on the logo", definition: "A software case: Windows stopped starting after an update and was fixed remotely.",
+     properties: {raw_description: "Since last night it gets stuck on the Lenovo logo with the spinning circle and never loads Windows", status: resolved, channel: chat, opened_at: "2026-03-09T08:40:00", closed_at: "2026-03-09T09:22:00"}}
+  - {id: AS_004_1, type: SymptomAssessment, name: Case 004 assessment 1, definition: "Initial judgement: matches a typical expression of Windows Won't Start.",
+     properties: {sequence: 1, status: superseded, evidence: "The description matches a typical expression of Windows Won't Start; to be confirmed by checks.", assessed_at: "2026-03-09T08:41:00"}}
+  - {id: CR_004_1, type: CheckResult, name: "Case 004 check 1: power indicator light", properties: {result: lit, evidence: "Customer: yes, the power light is on.", executed_at: "2026-03-09T08:43:00"}}
+  - {id: CR_004_2, type: CheckResult, name: "Case 004 check 2: reaches the Windows desktop", properties: {result: stuck_or_error, evidence: "Customer: it just sits on the logo with the circle going round.", executed_at: "2026-03-09T08:49:00"}}
+  - {id: AS_004_2, type: SymptomAssessment, name: Case 004 assessment 2, definition: "Confirmed: Windows Won't Start.",
+     properties: {sequence: 2, status: confirmed, evidence: "The power light is on and Windows never reaches the desktop: both distinguishing conditions are met.", assessed_at: "2026-03-09T08:50:00"}}
+  - {id: CR_004_3, type: CheckResult, name: "Case 004 check 3: recent change", properties: {result: windows_update, evidence: "Customer: it installed updates when I shut down last night.", executed_at: "2026-03-09T08:52:00"}}
+  - {id: CR_004_4, type: CheckResult, name: "Case 004 check 4: automatic startup repair", properties: {result: could_not_repair, evidence: "Customer: it says Startup Repair couldn't repair your PC.", executed_at: "2026-03-09T09:05:00"}}
+  - {id: CR_004_5, type: CheckResult, name: "Case 004 check 5: starts in safe mode", properties: {result: starts, evidence: "Customer: it started, with Safe Mode written in the corners.", executed_at: "2026-03-09T09:13:00"}}
+
+  # ---- case 5 (warranty): a question, not a fault ----
+  - {id: CASE_005, type: SupportCase, name: "Case 005: warranty question", definition: "A warranty case: the customer asks whether the laptop is covered.",
+     properties: {raw_description: "Is my laptop still under warranty?", status: resolved, channel: email, opened_at: "2026-03-10T11:00:00", closed_at: "2026-03-10T11:09:00"}}
+  - {id: AS_005_1, type: SymptomAssessment, name: Case 005 assessment 1, definition: "Confirmed at once: a warranty status inquiry.",
+     properties: {sequence: 1, status: confirmed, evidence: "The customer asks directly about warranty cover; this request type has no distinguishing conditions.", assessed_at: "2026-03-10T11:01:00"}}
+  - {id: CR_005_1, type: CheckResult, name: "Case 005 check 1: warranty status", properties: {result: in_warranty, evidence: "Serial number checked: warranty valid until November 2027.", executed_at: "2026-03-10T11:04:00"}}
+  - {id: CR_005_2, type: CheckResult, name: "Case 005 check 2: warranty service level", properties: {result: onsite, evidence: "Warranty lookup: 3-year on-site service.", executed_at: "2026-03-10T11:05:00"}}
 
 edges:
   # ---- symptom -> checklists (role, order, optional device condition) ----
@@ -532,6 +933,21 @@ edges:
   - {source: S_BATTERY_DRAIN, type: HAS_CHECKLIST, target: CL_BATTERY_DRAIN_TRIAGE, properties: {role: triage, order: 1}}
   - {source: S_BATTERY_DRAIN, type: HAS_CHECKLIST, target: CL_BATTERY_DRAIN_USAGE, properties: {role: locate_cause, order: 2}}
   - {source: S_BATTERY_DRAIN, type: HAS_CHECKLIST, target: CL_REMOVABLE_BATTERY, properties: {role: deeper, order: 3, applies_when: "removable_battery == true"}}
+
+  - {source: S_NO_POWER, type: HAS_CHECKLIST, target: CL_WARRANTY_ENTITLEMENT, properties: {role: entitlement, order: 4}}
+  - {source: S_BLACK_SCREEN, type: HAS_CHECKLIST, target: CL_WARRANTY_ENTITLEMENT, properties: {role: entitlement, order: 4}}
+  - {source: S_SCREEN_DAMAGE, type: HAS_CHECKLIST, target: CL_WARRANTY_ENTITLEMENT, properties: {role: entitlement, order: 3}}
+  - {source: S_NOT_CHARGING, type: HAS_CHECKLIST, target: CL_WARRANTY_ENTITLEMENT, properties: {role: entitlement, order: 4}}
+  - {source: S_BATTERY_DRAIN, type: HAS_CHECKLIST, target: CL_WARRANTY_ENTITLEMENT, properties: {role: entitlement, order: 4}}
+  - {source: S_OS_WONT_START, type: HAS_CHECKLIST, target: CL_OS_START_TRIAGE, properties: {role: triage, order: 1}}
+  - {source: S_OS_WONT_START, type: HAS_CHECKLIST, target: CL_OS_START_RECOVERY, properties: {role: locate_cause, order: 2}}
+  - {source: S_OS_WONT_START, type: HAS_CHECKLIST, target: CL_OS_START_HARDWARE, properties: {role: deeper, order: 3}}
+  - {source: S_OS_WONT_START, type: HAS_CHECKLIST, target: CL_WARRANTY_ENTITLEMENT, properties: {role: entitlement, order: 4}}
+  - {source: S_SLOW_PERFORMANCE, type: HAS_CHECKLIST, target: CL_SLOW_TRIAGE, properties: {role: triage, order: 1}}
+  - {source: S_SLOW_PERFORMANCE, type: HAS_CHECKLIST, target: CL_SLOW_RESOURCES, properties: {role: locate_cause, order: 2}}
+  - {source: S_SLOW_PERFORMANCE, type: HAS_CHECKLIST, target: CL_SLOW_SYSTEM_HEALTH, properties: {role: deeper, order: 3}}
+  - {source: S_WARRANTY_INQUIRY, type: HAS_CHECKLIST, target: CL_WARRANTY_LOOKUP, properties: {role: triage, order: 1}}
+  - {source: S_WARRANTY_INQUIRY, type: HAS_CHECKLIST, target: CL_WARRANTY_COVER, properties: {role: locate_cause, order: 2}}
 
   # ---- checklist -> checks ----
   - {source: CL_NO_POWER_TRIAGE, type: CONTAINS_CHECK, target: CK_POWER_LED, properties: {step_order: 1}}
@@ -571,33 +987,76 @@ edges:
   - {source: CL_REMOVABLE_BATTERY, type: CONTAINS_CHECK, target: CK_BATTERY_RESEAT, properties: {step_order: 1}}
   - {source: CL_REMOVABLE_BATTERY, type: CONTAINS_CHECK, target: CK_BATTERY_CONTACTS, properties: {step_order: 2}}
 
+  - {source: CL_WARRANTY_ENTITLEMENT, type: CONTAINS_CHECK, target: CK_WARRANTY_STATUS, properties: {step_order: 1}}
+  - {source: CL_WARRANTY_ENTITLEMENT, type: CONTAINS_CHECK, target: CK_ADP_COVER, properties: {step_order: 2}}
+  - {source: CL_OS_START_TRIAGE, type: CONTAINS_CHECK, target: CK_POWER_LED, properties: {step_order: 1}}
+  - {source: CL_OS_START_TRIAGE, type: CONTAINS_CHECK, target: CK_BOOT_COMPLETES, properties: {step_order: 2}}
+  - {source: CL_OS_START_RECOVERY, type: CONTAINS_CHECK, target: CK_RECENT_CHANGE, properties: {step_order: 1}}
+  - {source: CL_OS_START_RECOVERY, type: CONTAINS_CHECK, target: CK_STARTUP_REPAIR, properties: {step_order: 2}}
+  - {source: CL_OS_START_RECOVERY, type: CONTAINS_CHECK, target: CK_SAFE_MODE, properties: {step_order: 3}}
+  - {source: CL_OS_START_HARDWARE, type: CONTAINS_CHECK, target: CK_PERIPHERALS, properties: {step_order: 1}}
+  - {source: CL_OS_START_HARDWARE, type: CONTAINS_CHECK, target: CK_STORAGE_DIAG, properties: {step_order: 2}}
+  - {source: CL_SLOW_TRIAGE, type: CONTAINS_CHECK, target: CK_BOOT_COMPLETES, properties: {step_order: 1}}
+  - {source: CL_SLOW_TRIAGE, type: CONTAINS_CHECK, target: CK_SLOW_SCOPE, properties: {step_order: 2}}
+  - {source: CL_SLOW_RESOURCES, type: CONTAINS_CHECK, target: CK_TASK_MANAGER, properties: {step_order: 1}}
+  - {source: CL_SLOW_RESOURCES, type: CONTAINS_CHECK, target: CK_STARTUP_APPS, properties: {step_order: 2}}
+  - {source: CL_SLOW_RESOURCES, type: CONTAINS_CHECK, target: CK_STORAGE_FREE, properties: {step_order: 3}}
+  - {source: CL_SLOW_SYSTEM_HEALTH, type: CONTAINS_CHECK, target: CK_SYSTEM_UPDATE, properties: {step_order: 1}}
+  - {source: CL_SLOW_SYSTEM_HEALTH, type: CONTAINS_CHECK, target: CK_MALWARE_SCAN, properties: {step_order: 2}}
+  - {source: CL_WARRANTY_LOOKUP, type: CONTAINS_CHECK, target: CK_WARRANTY_STATUS, properties: {step_order: 1}}
+  - {source: CL_WARRANTY_LOOKUP, type: CONTAINS_CHECK, target: CK_PROOF_OF_PURCHASE, properties: {step_order: 2}}
+  - {source: CL_WARRANTY_COVER, type: CONTAINS_CHECK, target: CK_WARRANTY_TYPE, properties: {step_order: 1}}
+  - {source: CL_WARRANTY_COVER, type: CONTAINS_CHECK, target: CK_ADP_COVER, properties: {step_order: 2}}
+
   # ---- ADDITION: symptom -> solution, with the condition under which it applies ----
+  # Remote fixes need no entitlement. Repairs and shipped parts need warranty cover; the same finding with an
+  # expired warranty leads to a paid repair quote instead.
   - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_USE_OTHER_OUTLET, properties: {condition: "CK_WALL_OUTLET == 'works'", priority: 1}}
   - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_POWER_RESET, properties: {condition: "CK_POWER_RESET == 'fixed'", priority: 2}}
   - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_REMOVE_PERIPHERAL, properties: {condition: "CK_PERIPHERALS == 'starts'", priority: 3}}
   - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_CLEAN_PORT, properties: {condition: "CK_CHARGE_PORT == 'debris'", priority: 4}}
-  - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_REPLACE_ADAPTER, properties: {condition: "CK_ADAPTER_LED == 'off' or CK_SPARE_ADAPTER == 'charges'", priority: 5}}
-  - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_REPAIR_PORT, properties: {condition: "CK_CHARGE_PORT == 'damaged'", priority: 6}}
-  - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_REPAIR_MAINBOARD, properties: {condition: "CK_POWER_RESET == 'no_change' and CK_ADAPTER_LED != 'off' and CK_PERIPHERALS == 'no_change'", priority: 7}}
+  - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_REPLACE_ADAPTER, properties: {condition: "(CK_ADAPTER_LED == 'off' or CK_SPARE_ADAPTER == 'charges') and CK_WARRANTY_STATUS == 'in_warranty'", priority: 5}}
+  - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_REPAIR_PORT, properties: {condition: "(CK_CHARGE_PORT == 'damaged') and CK_WARRANTY_STATUS == 'in_warranty'", priority: 6}}
+  - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_REPAIR_MAINBOARD, properties: {condition: "(CK_POWER_RESET == 'no_change' and CK_ADAPTER_LED != 'off' and CK_PERIPHERALS == 'no_change') and CK_WARRANTY_STATUS == 'in_warranty'", priority: 7}}
+  - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_PAID_REPAIR_QUOTE, properties: {condition: "((CK_ADAPTER_LED == 'off' or CK_SPARE_ADAPTER == 'charges') or (CK_CHARGE_PORT == 'damaged') or (CK_POWER_RESET == 'no_change' and CK_ADAPTER_LED != 'off' and CK_PERIPHERALS == 'no_change')) and CK_WARRANTY_STATUS == 'expired'", priority: 8}}
   - {source: S_BLACK_SCREEN, type: RESOLVED_BY, target: SOL_POWER_RESET, properties: {condition: "CK_POWER_RESET == 'fixed'", priority: 1}}
-  - {source: S_BLACK_SCREEN, type: RESOLVED_BY, target: SOL_REPAIR_DISPLAY, properties: {condition: "CK_EXTERNAL_MONITOR == 'external_ok' or CK_FLASHLIGHT == 'faint_image'", priority: 2}}
-  - {source: S_BLACK_SCREEN, type: RESOLVED_BY, target: SOL_GPU_DRIVER, properties: {condition: "CK_EXTERNAL_MONITOR == 'external_blank' and CK_CAPS_LOCK != 'no_response'", priority: 3}}
-  - {source: S_BLACK_SCREEN, type: RESOLVED_BY, target: SOL_REPAIR_MAINBOARD, properties: {condition: "CK_CAPS_LOCK == 'no_response' and CK_POWER_RESET == 'no_change'", priority: 4}}
-  - {source: S_SCREEN_DAMAGE, type: RESOLVED_BY, target: SOL_REPAIR_LIQUID, properties: {condition: "CK_LIQUID_SIGNS == 'present' or CK_DAMAGE_CAUSE == 'liquid'", priority: 1}}
-  - {source: S_SCREEN_DAMAGE, type: RESOLVED_BY, target: SOL_REPAIR_DISPLAY, properties: {condition: "CK_LIQUID_SIGNS == 'none'", priority: 2}}
+  - {source: S_BLACK_SCREEN, type: RESOLVED_BY, target: SOL_GPU_DRIVER, properties: {condition: "CK_EXTERNAL_MONITOR == 'external_blank' and CK_CAPS_LOCK != 'no_response'", priority: 2}}
+  - {source: S_BLACK_SCREEN, type: RESOLVED_BY, target: SOL_REPAIR_DISPLAY, properties: {condition: "(CK_EXTERNAL_MONITOR == 'external_ok' or CK_FLASHLIGHT == 'faint_image') and CK_WARRANTY_STATUS == 'in_warranty'", priority: 3}}
+  - {source: S_BLACK_SCREEN, type: RESOLVED_BY, target: SOL_REPAIR_MAINBOARD, properties: {condition: "(CK_CAPS_LOCK == 'no_response' and CK_POWER_RESET == 'no_change') and CK_WARRANTY_STATUS == 'in_warranty'", priority: 4}}
+  - {source: S_BLACK_SCREEN, type: RESOLVED_BY, target: SOL_PAID_REPAIR_QUOTE, properties: {condition: "((CK_EXTERNAL_MONITOR == 'external_ok' or CK_FLASHLIGHT == 'faint_image') or (CK_CAPS_LOCK == 'no_response' and CK_POWER_RESET == 'no_change')) and CK_WARRANTY_STATUS == 'expired'", priority: 5}}
   - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_USE_OTHER_OUTLET, properties: {condition: "CK_WALL_OUTLET == 'works'", priority: 1}}
   - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_DISABLE_CHARGE_LIMIT, properties: {condition: "CK_CHARGE_LIMIT == 'enabled'", priority: 2}}
   - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_CLEAN_PORT, properties: {condition: "CK_CHARGE_PORT == 'debris'", priority: 3}}
-  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_REPLACE_ADAPTER, properties: {condition: "CK_SPARE_ADAPTER == 'charges' or CK_ADAPTER_LED == 'off' or CK_ADAPTER_WATTAGE == 'lower'", priority: 4}}
-  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_POWER_RESET, properties: {condition: "CK_POWER_RESET == 'fixed'", priority: 5}}
-  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_REPAIR_PORT, properties: {condition: "CK_CHARGE_PORT == 'damaged'", priority: 6}}
-  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_REPLACE_BATTERY, properties: {condition: "CK_SPARE_ADAPTER == 'still_not' and CK_BATTERY_HEALTH == 'degraded'", priority: 7}}
-  - {source: S_BATTERY_DRAIN, type: RESOLVED_BY, target: SOL_REPLACE_BATTERY, properties: {condition: "CK_BATTERY_HEALTH == 'degraded'", priority: 1}}
-  - {source: S_BATTERY_DRAIN, type: RESOLVED_BY, target: SOL_POWER_SETTINGS, properties: {condition: "CK_BATTERY_HEALTH == 'healthy' and (CK_BACKGROUND_APPS == 'heavy_app' or CK_POWER_MODE == 'performance')", priority: 2}}
-  - {source: S_BATTERY_DRAIN, type: RESOLVED_BY, target: SOL_CLEAN_BATTERY_CONTACTS, properties: {condition: "CK_BATTERY_CONTACTS == 'dirty'", priority: 3}}
+  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_POWER_RESET, properties: {condition: "CK_POWER_RESET == 'fixed'", priority: 4}}
+  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_REPLACE_ADAPTER, properties: {condition: "(CK_SPARE_ADAPTER == 'charges' or CK_ADAPTER_LED == 'off' or CK_ADAPTER_WATTAGE == 'lower') and CK_WARRANTY_STATUS == 'in_warranty'", priority: 5}}
+  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_REPAIR_PORT, properties: {condition: "(CK_CHARGE_PORT == 'damaged') and CK_WARRANTY_STATUS == 'in_warranty'", priority: 6}}
+  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_REPLACE_BATTERY, properties: {condition: "(CK_SPARE_ADAPTER == 'still_not' and CK_BATTERY_HEALTH == 'degraded') and CK_WARRANTY_STATUS == 'in_warranty'", priority: 7}}
+  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_PAID_REPAIR_QUOTE, properties: {condition: "((CK_SPARE_ADAPTER == 'charges' or CK_ADAPTER_LED == 'off' or CK_ADAPTER_WATTAGE == 'lower') or (CK_CHARGE_PORT == 'damaged') or (CK_SPARE_ADAPTER == 'still_not' and CK_BATTERY_HEALTH == 'degraded')) and CK_WARRANTY_STATUS == 'expired'", priority: 8}}
+  - {source: S_BATTERY_DRAIN, type: RESOLVED_BY, target: SOL_POWER_SETTINGS, properties: {condition: "CK_BATTERY_HEALTH == 'healthy' and (CK_BACKGROUND_APPS == 'heavy_app' or CK_POWER_MODE == 'performance')", priority: 1}}
+  - {source: S_BATTERY_DRAIN, type: RESOLVED_BY, target: SOL_CLEAN_BATTERY_CONTACTS, properties: {condition: "CK_BATTERY_CONTACTS == 'dirty'", priority: 2}}
+  - {source: S_BATTERY_DRAIN, type: RESOLVED_BY, target: SOL_REPLACE_BATTERY, properties: {condition: "(CK_BATTERY_HEALTH == 'degraded') and CK_WARRANTY_STATUS == 'in_warranty'", priority: 3}}
+  - {source: S_BATTERY_DRAIN, type: RESOLVED_BY, target: SOL_PAID_REPAIR_QUOTE, properties: {condition: "((CK_BATTERY_HEALTH == 'degraded')) and CK_WARRANTY_STATUS == 'expired'", priority: 4}}
+  - {source: S_OS_WONT_START, type: RESOLVED_BY, target: SOL_STARTUP_REPAIR, properties: {condition: "CK_STARTUP_REPAIR == 'repaired'", priority: 1}}
+  - {source: S_OS_WONT_START, type: RESOLVED_BY, target: SOL_UNINSTALL_UPDATE, properties: {condition: "CK_RECENT_CHANGE == 'windows_update' and CK_SAFE_MODE == 'starts'", priority: 2}}
+  - {source: S_OS_WONT_START, type: RESOLVED_BY, target: SOL_REMOVE_SOFTWARE, properties: {condition: "CK_RECENT_CHANGE == 'new_software' and CK_SAFE_MODE == 'starts'", priority: 3}}
+  - {source: S_OS_WONT_START, type: RESOLVED_BY, target: SOL_REMOVE_PERIPHERAL, properties: {condition: "CK_PERIPHERALS == 'starts'", priority: 4}}
+  - {source: S_OS_WONT_START, type: RESOLVED_BY, target: SOL_RESET_WINDOWS, properties: {condition: "CK_STARTUP_REPAIR == 'could_not_repair' and CK_STORAGE_DIAG == 'pass'", priority: 5}}
+  - {source: S_OS_WONT_START, type: RESOLVED_BY, target: SOL_REPAIR_STORAGE, properties: {condition: "(CK_STORAGE_DIAG == 'fail') and CK_WARRANTY_STATUS == 'in_warranty'", priority: 6}}
+  - {source: S_OS_WONT_START, type: RESOLVED_BY, target: SOL_PAID_REPAIR_QUOTE, properties: {condition: "((CK_STORAGE_DIAG == 'fail')) and CK_WARRANTY_STATUS == 'expired'", priority: 7}}
+  - {source: S_SLOW_PERFORMANCE, type: RESOLVED_BY, target: SOL_CLOSE_HEAVY_PROCESS, properties: {condition: "CK_TASK_MANAGER in ['cpu_high', 'memory_high']", priority: 1}}
+  - {source: S_SLOW_PERFORMANCE, type: RESOLVED_BY, target: SOL_DISABLE_STARTUP_APPS, properties: {condition: "CK_STARTUP_APPS == 'many'", priority: 2}}
+  - {source: S_SLOW_PERFORMANCE, type: RESOLVED_BY, target: SOL_FREE_STORAGE, properties: {condition: "CK_STORAGE_FREE == 'low'", priority: 3}}
+  - {source: S_SLOW_PERFORMANCE, type: RESOLVED_BY, target: SOL_INSTALL_UPDATES, properties: {condition: "CK_SYSTEM_UPDATE == 'updates_pending'", priority: 4}}
+  - {source: S_SLOW_PERFORMANCE, type: RESOLVED_BY, target: SOL_REMOVE_MALWARE, properties: {condition: "CK_MALWARE_SCAN == 'threats_found'", priority: 5}}
+  - {source: S_SCREEN_DAMAGE, type: RESOLVED_BY, target: SOL_REPAIR_LIQUID, properties: {condition: "(CK_LIQUID_SIGNS == 'present' or CK_DAMAGE_CAUSE == 'liquid') and CK_ADP_COVER == 'covered'", priority: 1}}
+  - {source: S_SCREEN_DAMAGE, type: RESOLVED_BY, target: SOL_REPAIR_DISPLAY, properties: {condition: "CK_LIQUID_SIGNS == 'none' and CK_ADP_COVER == 'covered'", priority: 2}}
+  - {source: S_SCREEN_DAMAGE, type: RESOLVED_BY, target: SOL_PAID_REPAIR_QUOTE, properties: {condition: "CK_ADP_COVER == 'not_covered'", priority: 3}}
+  - {source: S_WARRANTY_INQUIRY, type: RESOLVED_BY, target: SOL_CONFIRM_COVERAGE, properties: {condition: "CK_WARRANTY_STATUS == 'in_warranty' and CK_WARRANTY_TYPE in ['depot', 'onsite', 'premier']", priority: 1}}
+  - {source: S_WARRANTY_INQUIRY, type: RESOLVED_BY, target: SOL_OFFER_EXTENSION, properties: {condition: "CK_WARRANTY_STATUS == 'expired'", priority: 2}}
+  - {source: S_WARRANTY_INQUIRY, type: RESOLVED_BY, target: SOL_VERIFY_SERIAL, properties: {condition: "CK_WARRANTY_STATUS == 'not_found'", priority: 3}}
 
   # ---- case 1 ----
-  - {source: CASE_001, type: INVOLVES_DEVICE, target: DEV_PRO16}
+  - {source: CASE_001, type: INVOLVES_DEVICE, target: DEV_LEGION5}
   - {source: CASE_001, type: HAS_ASSESSMENT, target: AS_001_1}
   - {source: CASE_001, type: HAS_ASSESSMENT, target: AS_001_2}
   - {source: CASE_001, type: HAS_ASSESSMENT, target: AS_001_3}
@@ -624,7 +1083,7 @@ edges:
   - {source: CASE_001, type: SELECTED_SOLUTION, target: SOL_REPAIR_DISPLAY, properties: {outcome: resolved}}
 
   # ---- case 2 ----
-  - {source: CASE_002, type: INVOLVES_DEVICE, target: DEV_AIR13}
+  - {source: CASE_002, type: INVOLVES_DEVICE, target: DEV_SLIM5}
   - {source: CASE_002, type: HAS_ASSESSMENT, target: AS_002_1}
   - {source: CASE_002, type: HAS_ASSESSMENT, target: AS_002_2}
   - {source: CASE_002, type: HAS_CHECK_RESULT, target: CR_002_1}
@@ -640,7 +1099,7 @@ edges:
   - {source: CASE_002, type: SELECTED_SOLUTION, target: SOL_REPLACE_ADAPTER, properties: {outcome: resolved}}
 
   # ---- case 3 ----
-  - {source: CASE_003, type: INVOLVES_DEVICE, target: DEV_WORK15}
+  - {source: CASE_003, type: INVOLVES_DEVICE, target: DEV_T480}
   - {source: CASE_003, type: HAS_ASSESSMENT, target: AS_003_1}
   - {source: CASE_003, type: HAS_ASSESSMENT, target: AS_003_2}
   - {source: CASE_003, type: HAS_CHECK_RESULT, target: CR_003_1}
@@ -656,4 +1115,43 @@ edges:
   - {source: AS_003_2, type: BASED_ON, target: CR_003_2}
   - {source: AS_003_2, type: ASSESSES, target: S_NOT_CHARGING, properties: {verdict: ruled_out, reason: It charges normally to 100%}}
   - {source: AS_003_2, type: ASSESSES, target: S_BATTERY_DRAIN, properties: {verdict: confirmed, reason: All distinguishing conditions are met}}
-  - {source: CASE_003, type: SELECTED_SOLUTION, target: SOL_REPLACE_BATTERY, properties: {outcome: resolved}}
+  - {source: CASE_003, type: HAS_CHECK_RESULT, target: CR_003_4}
+  - {source: CR_003_4, type: RESULT_OF, target: CK_WARRANTY_STATUS}
+  - {source: CASE_003, type: SELECTED_SOLUTION, target: SOL_PAID_REPAIR_QUOTE, properties: {outcome: resolved}}
+
+  # ---- case 1 and 2: warranty checks ----
+  - {source: CASE_001, type: HAS_CHECK_RESULT, target: CR_001_4}
+  - {source: CR_001_4, type: RESULT_OF, target: CK_WARRANTY_STATUS}
+  - {source: CASE_002, type: HAS_CHECK_RESULT, target: CR_002_4}
+  - {source: CR_002_4, type: RESULT_OF, target: CK_WARRANTY_STATUS}
+
+  # ---- case 4 ----
+  - {source: CASE_004, type: INVOLVES_DEVICE, target: DEV_T14}
+  - {source: CASE_004, type: HAS_ASSESSMENT, target: AS_004_1}
+  - {source: CASE_004, type: HAS_ASSESSMENT, target: AS_004_2}
+  - {source: CASE_004, type: HAS_CHECK_RESULT, target: CR_004_1}
+  - {source: CASE_004, type: HAS_CHECK_RESULT, target: CR_004_2}
+  - {source: CASE_004, type: HAS_CHECK_RESULT, target: CR_004_3}
+  - {source: CASE_004, type: HAS_CHECK_RESULT, target: CR_004_4}
+  - {source: CASE_004, type: HAS_CHECK_RESULT, target: CR_004_5}
+  - {source: CR_004_1, type: RESULT_OF, target: CK_POWER_LED}
+  - {source: CR_004_2, type: RESULT_OF, target: CK_BOOT_COMPLETES}
+  - {source: CR_004_3, type: RESULT_OF, target: CK_RECENT_CHANGE}
+  - {source: CR_004_4, type: RESULT_OF, target: CK_STARTUP_REPAIR}
+  - {source: CR_004_5, type: RESULT_OF, target: CK_SAFE_MODE}
+  - {source: AS_004_1, type: ASSESSES, target: S_OS_WONT_START, properties: {verdict: supported, reason: The description matches a typical expression}}
+  - {source: AS_004_2, type: SUPERSEDES, target: AS_004_1}
+  - {source: AS_004_2, type: BASED_ON, target: CR_004_1}
+  - {source: AS_004_2, type: BASED_ON, target: CR_004_2}
+  - {source: AS_004_2, type: ASSESSES, target: S_OS_WONT_START, properties: {verdict: confirmed, reason: Both distinguishing conditions are met}}
+  - {source: CASE_004, type: SELECTED_SOLUTION, target: SOL_UNINSTALL_UPDATE, properties: {outcome: resolved}}
+
+  # ---- case 5 ----
+  - {source: CASE_005, type: INVOLVES_DEVICE, target: DEV_X1C}
+  - {source: CASE_005, type: HAS_ASSESSMENT, target: AS_005_1}
+  - {source: CASE_005, type: HAS_CHECK_RESULT, target: CR_005_1}
+  - {source: CASE_005, type: HAS_CHECK_RESULT, target: CR_005_2}
+  - {source: CR_005_1, type: RESULT_OF, target: CK_WARRANTY_STATUS}
+  - {source: CR_005_2, type: RESULT_OF, target: CK_WARRANTY_TYPE}
+  - {source: AS_005_1, type: ASSESSES, target: S_WARRANTY_INQUIRY, properties: {verdict: confirmed, reason: The customer asks directly about warranty cover}}
+  - {source: CASE_005, type: SELECTED_SOLUTION, target: SOL_CONFIRM_COVERAGE, properties: {outcome: resolved}}

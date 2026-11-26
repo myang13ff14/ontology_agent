@@ -41,7 +41,7 @@ python3 -m venv .venv
 Open **http://localhost:8600**. API documentation is at http://localhost:8600/docs.
 
 ```bash
-.venv/bin/python -m pytest -q                                   # 88 tests, about 7 seconds
+.venv/bin/python -m pytest -q                                   # 91 tests, about 9 seconds
 .venv/bin/python -m ontolab.cli coverage                        # tool coverage, no model needed
 .venv/bin/python -m ontolab.cli ask "What should the agent do after a power reset fails?" --config B
 .venv/bin/python -m ontolab.cli evaluate --split test --repeats 3
@@ -199,10 +199,15 @@ hash of the graph; when the ontology changes they are reported **stale** until r
 ontology, in three kinds: authoritative, ambiguous (ask the user), and collection (a business
 grouping).
 
-## Troubleshooting on the diagram-based ontology
+## Troubleshooting on the diagram-based ontology (Lenovo support POC)
 
-A second, smaller ontology (`data/ontology/troubleshooting_ideal.yaml`) models troubleshooting as a
-case record, and an agent works live cases on it in the **Troubleshooting** section.
+A second ontology (`data/ontology/troubleshooting_ideal.yaml`) models troubleshooting as a case record,
+and an agent works live cases on it in the **Troubleshooting** section. It is scoped to a Lenovo support
+POC covering **hardware, software and warranty**.
+
+> Lenovo product-line names make the POC concrete, but every device attribute, check, condition,
+> solution, warranty rule and case in the file is invented. It is not official Lenovo support or
+> warranty guidance.
 
 ```
 SupportCase ─ INVOLVES_DEVICE ─▶ Device
@@ -213,17 +218,35 @@ SupportCase ─ HAS_CHECK_RESULT ─▶ CheckResult ─ RESULT_OF ─▶ CheckDe
 SupportCase ─ SELECTED_SOLUTION ─▶ Solution            Symptom ─ RESOLVED_BY ─▶ Solution   (addition to the diagram)
 ```
 
-- **Knowledge layer**: 5 symptoms (each with typical expressions, vague expressions and machine-checkable
-  distinguishing conditions), 24 check definitions listing every possible result, 14 checklists,
-  14 solutions with applicability conditions, 3 devices.
-- **Each symptom has two or three checklists**, linked with a `role` and an `order`: *triage* confirms
-  the symptom, *locate_cause* finds what is wrong, and *deeper* holds further or device-specific
-  checks. A link can carry `applies_when` (for example `removable_battery == true`), and that
-  checklist is skipped for devices it does not fit. Checks are shared between checklists.
+- **Knowledge layer**: 8 symptoms in three categories (5 hardware, 2 software, 1 warranty), each with
+  typical expressions, vague expressions and machine-checkable distinguishing conditions; 39 check
+  definitions listing every possible result; 23 checklists; 28 solutions with applicability
+  conditions; 6 devices across ThinkPad, IdeaPad, Legion and Yoga.
+- **Each symptom has two or three working checklists**, linked with a `role` and an `order`: *triage*
+  confirms the symptom, *locate_cause* finds what is wrong, and *deeper* holds further or
+  device-specific checks. A link can carry `applies_when` (for example `removable_battery == true`),
+  and that checklist is skipped for devices it does not fit. Checks are shared between checklists.
+- **It simulates a voice agent.** Every check definition carries `steps`: short spoken instructions,
+  one action each. The agent says one step per turn, waits for the customer's reply, and stores it
+  with `record_step_feedback`. The model decides the order, both which check to do next and which
+  step to give first; the ranking from `suggest_next_check` and the written step order are advice.
+  It may skip a step the conversation has made unnecessary, but must give the reason. Code refuses a
+  check result while any step has neither a reply nor a skip reason. Replies are kept on the
+  `CheckResult` as `step_feedback`, in the order the steps were taken.
+- **Warranty gates repairs.** Symptoms that can end in a repair or a shipped part also carry an
+  *entitlement* checklist. Remote fixes need no cover; a depot repair or part needs the warranty
+  recorded as valid; the same finding with an expired warranty leads to a paid repair quote. Physical
+  damage is covered only by accidental damage protection.
+- **A warranty question is modelled as a request type**: a "symptom" with no distinguishing
+  conditions, confirmed at once and answered from the warranty checks.
+- **Warranty status is not looked up.** There is no warranty system behind the POC, so the status is
+  whatever the person playing the customer says. A real deployment would replace that check with a
+  tool that queries the warranty service by serial number.
 - **Case layer**: every conversation writes a `SupportCase`, its `CheckResult`s and a chain of
-  `SymptomAssessment`s into the graph. Three worked example cases ship with the file.
-- **The agent** (`ontolab/troubleshooting/`) has 10 tools: `match_symptoms`, `list_symptoms`,
-  `describe_symptom`, `get_case`, `suggest_next_check`, `record_check_result`, `record_assessment`,
+  `SymptomAssessment`s into the graph. Five worked example cases ship with the file: three hardware,
+  one software, one warranty.
+- **The agent** (`ontolab/troubleshooting/`) has 11 tools: `match_symptoms`, `list_symptoms`,
+  `describe_symptom`, `get_case`, `suggest_next_check`, `record_step_feedback`, `record_check_result`, `record_assessment`,
   `get_applicable_solutions`, `select_solution`, `escalate_case`.
 - **Three decisions are made by code, not by the model**: a check result must use a result code its
   definition lists; a symptom can be marked confirmed only when all of its distinguishing conditions
@@ -232,8 +255,7 @@ SupportCase ─ SELECTED_SOLUTION ─▶ Solution            Symptom ─ RESOLVE
   is confirmed it walks that symptom's checklists in order, offering the next check a solution depends on.
 - Writes go through the generic graph store and are rejected unless they satisfy the ontology schema.
 - The workspace has its own database (`runs/troubleshooting.duckdb`). It reloads automatically when
-  the ontology file changes, and "Reset to the three examples" reloads on demand; both remove cases
-  opened in the lab.
+  the ontology file changes, and the reset button reloads on demand; both remove cases opened in the lab.
 
 Not built yet: a scripted multi-turn benchmark for this agent, and the comparison against a fixed
 script and a documents-only model.
