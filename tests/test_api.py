@@ -106,3 +106,22 @@ def test_conversations_remember_earlier_turns(client):
     stateless = client.post("/agents/run", json={"question": "What is the escalation rate?", "config": "A", "remember": False}).json()
     assert stateless["conversation"] is None
     assert client.get("/status").json()["memory"]["window_turns"] == 6
+
+
+def test_raw_data_can_be_browsed_but_only_known_tables(client):
+    tables = {t["name"]: t for t in client.get("/data/tables").json()["tables"]}
+    assert {"kg_node", "kg_edge", "service_case", "ontology_object_type", "sv_cases"} <= set(tables)
+    assert tables["kg_node"]["rows"] == 188 and "node_id" in [c["name"] for c in tables["kg_node"]["columns"]]
+    page = client.get("/data/table/kg_node", params={"limit": 5, "offset": 5}).json()
+    assert page["total"] == 188 and len(page["rows"]) == 5 and page["offset"] == 5
+    found = client.get("/data/table/kg_node", params={"search": "hard reset"}).json()
+    assert found["total"] == 1 and found["rows"][0]["node_id"] == "A_POWER_RESET"
+    exact = client.get("/data/table/kg_edge", params={"column": "relationship_type", "value": "SUPERSEDES"}).json()
+    assert exact["total"] == 1
+    assert "embedding" not in client.get("/data/table/kg_profile", params={"limit": 1}).json()["rows"][0]
+    assert client.get("/data/table/kg_node; DROP TABLE kg_node").status_code == 404
+    assert client.get("/data/table/information_schema.tables").status_code == 404
+    assert client.get("/data/table/kg_edge", params={"column": "nope", "value": "x"}).status_code == 400
+    other = client.get("/data/tables", params={"workspace": "troubleshooting"}).json()
+    assert "service_case" not in [t["name"] for t in other["tables"]]
+    assert client.get("/data/table/kg_node", params={"workspace": "troubleshooting", "search": "CASE_001"}).json()["total"] >= 1

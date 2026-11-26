@@ -1,6 +1,7 @@
 // Boot, sidebar (experiment controls) and section routing.
 
 import { apiGet, apiPost, h, select, field, experiment, setExperiment, onExperimentChange, banner, ApiError, fill } from './core.js';
+import { renderTroubleshooting } from './troubleshooting.js';
 import { renderExplorer } from './explorer.js';
 import { renderRegistry } from './registry.js';
 import { renderPlayground } from './playground.js';
@@ -11,6 +12,7 @@ const SECTIONS = [
   ['explorer', 'Ontology Explorer', renderExplorer],
   ['registry', 'Tool Registry', renderRegistry],
   ['playground', 'Agent Playground', renderPlayground],
+  ['troubleshooting', 'Troubleshooting', renderTroubleshooting],
   ['coverage', 'Coverage Explorer', renderCoverage],
   ['dashboard', 'Evaluation Dashboard', renderDashboard],
 ];
@@ -61,71 +63,89 @@ function checklist(items, isChecked, onToggle, groupOf) {
   return box;
 }
 
+// Which sidebar groups are open, and whether the sidebar is shown at all. Remembered per browser.
+const UI_KEY = 'ontolab.ui.v1';
+const ui = { sidebarHidden: false, open: {} };
+try { Object.assign(ui, JSON.parse(localStorage.getItem(UI_KEY) || '{}')); } catch { /* storage unavailable */ }
+const saveUi = () => { try { localStorage.setItem(UI_KEY, JSON.stringify(ui)); } catch { /* ignore */ } };
+
+// A collapsible sidebar group. Closed, its summary line still says what is set.
+function group(key, title, summary, tone, ...content) {
+  const node = h('details', { class: 'side-group', open: Boolean(ui.open[key]) },
+    h('summary', {}, h('span', { class: 'side-title' }, title), h('span', { class: `side-state ${tone || ''}` }, summary)),
+    h('div', { class: 'side-body' }, content));
+  node.addEventListener('toggle', () => { ui.open[key] = node.open; saveUi(); });
+  return node;
+}
+
+function applySidebarVisibility() {
+  document.getElementById('sidebar').hidden = ui.sidebarHidden;
+  const button = document.getElementById('sidebar-toggle');
+  button.setAttribute('aria-pressed', String(!ui.sidebarHidden));
+  button.title = ui.sidebarHidden ? 'Show experiment controls' : 'Hide experiment controls';
+}
+
 function renderSidebar() {
   const { status } = ctx;
   const side = document.getElementById('sidebar');
   const { ontology, llm, counts, profiles, limits } = status;
   const graphRelationships = ctx.schema.relationship_types_including_disabled.filter((r) => r.storage === 'graph');
-  let hidden = new Set(ontology.disabled.relationship_types);
+  const hidden = new Set(ontology.disabled.relationship_types);
   const overrideNames = Object.keys(experiment.overrides);
+  const modelLabel = experiment.llmProvider ? `${experiment.llmProvider}${experiment.llmModel ? ` / ${experiment.llmModel}` : ''}` : `${llm.provider} / ${llm.model}`;
+  const toolState = [experiment.disabledTools.length ? `${experiment.disabledTools.length} off` : '', overrideNames.length ? `${overrideNames.length} edited` : ''].filter(Boolean).join(', ');
 
-  fill(side, 
-    h('section', {},
+  fill(side,
+    h('div', { class: 'side-head' },
       h('h2', {}, 'Ontology Agent Lab'),
-      h('p', { class: 'muted small' }, 'All data is synthetic. A local reimplementation of the ideas in Snowflake’s ontology-grounded Cortex Agents post.'),
-      h('div', { class: 'row' }, h('span', { class: 'muted' }, 'Ontology'), h('span', {}, `${ontology.name} v${ontology.version}`)),
-      h('div', { class: 'row' }, h('span', { class: 'muted' }, 'Graph'), h('span', {}, `${counts.kg_node} objects · ${counts.kg_edge} links`)),
-      h('div', { class: 'row' }, h('span', { class: 'muted' }, 'Operational'), h('span', {}, `${counts.service_case.toLocaleString()} cases`)),
-      h('div', { class: 'row' }, h('span', { class: 'muted' }, 'Server model'), h('span', {}, `${llm.provider} / ${llm.model}`)),
-      llm.is_mock ? h('div', { class: 'banner warn small', style: { marginTop: '8px' } }, 'Mock model: a fixed policy, not an AI model. Results only test the pipeline.') : null),
+      h('p', { class: 'muted small' }, `${ontology.name} v${ontology.version} · ${counts.kg_node} objects · ${counts.service_case.toLocaleString()} cases · synthetic data`),
+      llm.is_mock ? h('div', { class: 'banner warn small' }, 'Mock model: a fixed policy, not an AI model.') : null),
+    h('h3', {}, 'Experiment controls'),
 
-    h('section', {},
-      h('h3', {}, 'Experiment controls'),
+    group('model', 'Model', modelLabel, experiment.llmProvider ? 'changed' : '',
       field('Model for requests', select([{ value: '', label: 'server default' }, { value: 'openai', label: 'OpenAI (name a model below)' }, { value: 'mock', label: 'mock policy (no AI)' }],
         experiment.llmProvider, (v) => setExperiment({ llmProvider: v }))),
-      h('div', { style: { height: '6px' } }),
       field('Model name (optional)', h('input', { type: 'text', value: experiment.llmModel, placeholder: 'e.g. gpt-5.5',
         onchange: (e) => setExperiment({ llmModel: e.target.value.trim() }) })),
-      h('div', { style: { height: '6px' } }),
       field(`Max tool calls per question (default ${limits.max_tool_calls})`, h('input', { type: 'number', min: 0, max: 40,
         value: experiment.maxToolCalls ?? '', placeholder: String(limits.max_tool_calls),
-        onchange: (e) => setExperiment({ maxToolCalls: e.target.value === '' ? null : Number(e.target.value) }) })),
-      h('div', { style: { height: '8px' } }),
-      h('div', { class: 'field' }, h('span', {}, `Disabled tools (${experiment.disabledTools.length})`),
-        checklist(ctx.tools, (name) => experiment.disabledTools.includes(name),
-          (name, on) => setExperiment({ disabledTools: on ? [...experiment.disabledTools, name] : experiment.disabledTools.filter((t) => t !== name) }),
-          (tool) => tool.category)),
-      overrideNames.length ? h('p', { class: 'small muted', style: { marginTop: '6px' } }, `Edited descriptions: ${overrideNames.join(', ')} `,
-        h('button', { class: 'btn small', onclick: () => setExperiment({ overrides: {} }) }, 'Reset')) : null),
+        onchange: (e) => setExperiment({ maxToolCalls: e.target.value === '' ? null : Number(e.target.value) }) }))),
 
-    h('section', {},
-      h('h3', {}, 'Ontology experiment'),
-      h('div', { class: 'field' }, h('span', {}, 'Hide relationship types from every tool'),
-        checklist(graphRelationships, (name) => hidden.has(name), (name, on) => { if (on) hidden.add(name); else hidden.delete(name); })),
-      h('div', { style: { height: '6px' } }),
+    group('tools', 'Tools', toolState || 'all on', toolState ? 'changed' : '',
+      h('p', { class: 'small muted' }, 'Ticked tools are removed from every agent configuration.'),
+      checklist(ctx.tools, (name) => experiment.disabledTools.includes(name),
+        (name, on) => setExperiment({ disabledTools: on ? [...experiment.disabledTools, name] : experiment.disabledTools.filter((t) => t !== name) }),
+        (tool) => tool.category),
+      overrideNames.length ? h('p', { class: 'small muted' }, `Edited descriptions: ${overrideNames.join(', ')} `,
+        h('button', { class: 'btn small', onclick: () => setExperiment({ overrides: {} }) }, 'Reset')) : null,
+      experiment.disabledTools.length ? h('button', { class: 'btn', onclick: () => setExperiment({ disabledTools: [] }) }, 'Enable all') : null),
+
+    group('ontology', 'Ontology', hidden.size ? `${hidden.size} hidden` : 'complete', hidden.size ? 'changed' : '',
+      h('p', { class: 'small muted' }, 'Hide relationship types from every tool. Server-wide; tools are unchanged.'),
+      checklist(graphRelationships, (name) => hidden.has(name), (name, on) => { if (on) hidden.add(name); else hidden.delete(name); }),
       h('button', { class: 'btn', onclick: async (e) => {
         e.target.disabled = true;
         try { await apiPost('/ontology/experiment/disable', { relationship_types: [...hidden] }); await ctx.reload(); }
         catch (err) { alertInline(side, err); e.target.disabled = false; }
-      } }, 'Apply to ontology'),
-      h('p', { class: 'small muted', style: { marginTop: '6px' } }, 'Server-wide. Tools are unchanged; only the graph they see changes.')),
+      } }, 'Apply')),
 
-    h('section', {},
-      h('h3', {}, 'Flattened profiles'),
-      profiles.stale ? h('div', { class: 'banner warn small' }, 'Stale: the ontology changed after the profiles were built. Agents D and E are reading old knowledge.') : null,
+    group('profiles', 'Profiles', profiles.stale ? 'stale' : 'up to date', profiles.stale ? 'warn' : '',
+      profiles.stale ? h('div', { class: 'banner warn small' }, 'The ontology changed after the profiles were built. Agents D and E are reading old knowledge.') : null,
       h('p', { class: 'small muted' }, `${profiles.profile_count} profiles · ${profiles.profile_version || 'not built'} · ${profiles.embedder}`),
       h('button', { class: 'btn', onclick: async (e) => {
         e.target.disabled = true;
         try { await apiPost('/graphrag/rebuild'); await ctx.reload(); } catch (err) { alertInline(side, err); e.target.disabled = false; }
-      } }, 'Rebuild profiles'),
-      h('p', { class: 'small muted', style: { marginTop: '8px' } }, `Traversal depth limit ${limits.max_depth}, result limit ${limits.max_results} (ontolab/config.py).`)),
-  );
+      } }, 'Rebuild profiles')),
+
+    h('p', { class: 'small muted side-foot' }, `Limits: depth ${limits.max_depth}, ${limits.max_results} results, memory ${status.memory.window_turns} turns.`));
+  applySidebarVisibility();
 }
 
 function alertInline(parent, err) {
   parent.prepend(banner('bad', err instanceof ApiError ? err.message : String(err)));
 }
 
+document.getElementById('sidebar-toggle').addEventListener('click', () => { ui.sidebarHidden = !ui.sidebarHidden; saveUi(); applySidebarVisibility(); });
 window.addEventListener('hashchange', renderSection);
 onExperimentChange(() => { renderSidebar(); renderSection(); });
 

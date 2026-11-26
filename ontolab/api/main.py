@@ -28,6 +28,8 @@ from ..llm.factory import PROVIDERS, describe, make_llm
 from ..ontology.ingest import ingest
 from ..semantic.view import SemanticQuery
 from ..services import Services, build_services
+from ..troubleshooting.workspace import build_workspace
+from . import troubleshooting
 
 state: dict[str, Any] = {}
 
@@ -36,6 +38,8 @@ state: dict[str, Any] = {}
 async def lifespan(app: FastAPI):
     if "services" not in state:  # tests inject their own
         install(build_services())
+    if "workspace" not in troubleshooting.state:
+        troubleshooting.install(build_workspace(state["services"].settings))
     yield
 
 
@@ -47,6 +51,16 @@ def install(services: Services, llm=None) -> None:
 
 
 app = FastAPI(title="Ontology-grounded agent lab", version="1.0.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def fresh_frontend(request, call_next):
+    """Make browsers revalidate the page and its scripts, so an update is never hidden by a cached copy."""
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.endswith((".js", ".css", ".html")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 def svc() -> Services:
@@ -150,16 +164,29 @@ def status() -> dict:
 
 # ---------------------------------------------------------------- ontology
 
+def graph_store(workspace: str | None):
+    """The graph store to read: the benchmark ontology by default, or the troubleshooting one."""
+    if workspace in (None, "", "benchmark"):
+        return svc().store
+    if workspace == "troubleshooting":
+        return troubleshooting.ws().store
+    raise HTTPException(400, f"Unknown workspace '{workspace}'. Use 'benchmark' or 'troubleshooting'.")
+
+
 @app.get("/ontology/schema")
-def ontology_schema() -> dict:
-    schema = svc().store.get_schema()
-    schema["relationship_types_including_disabled"] = list(svc().store.relationship_types().values())
+def ontology_schema(workspace: str | None = None) -> dict:
+    store = graph_store(workspace)
+    schema = store.get_schema()
+    schema["relationship_types_including_disabled"] = list(store.relationship_types().values())
     return schema
 
 
 @app.get("/ontology/nodes")
-def ontology_nodes(object_type: str | None = None, query: str | None = None) -> dict:
-    store = svc().store
+def ontology_nodes(object_type: str | None = None, query: str | None = None, workspace: str | None = None,
+                   details: bool = False) -> dict:
+    store = graph_store(workspace)
+    if details and not query:  # full objects, for the per-type tables
+        return {"nodes": store.all_nodes(object_type)}
     if query:
         try:
             return {"nodes": store.search_objects(query, object_type, 50)["matches"]}
@@ -169,8 +196,8 @@ def ontology_nodes(object_type: str | None = None, query: str | None = None) -> 
 
 
 @app.get("/ontology/node/{node_id}")
-def ontology_node(node_id: str) -> dict:
-    store = svc().store
+def ontology_node(node_id: str, workspace: str | None = None) -> dict:
+    store = graph_store(workspace)
     try:
         node = store.get_object(node_id)
         return {"node": node, "neighbors": store.get_neighbors(node_id, None, "both", 200)["neighbors"],
@@ -181,9 +208,10 @@ def ontology_node(node_id: str) -> dict:
 
 @app.get("/ontology/graph")
 def ontology_graph(object_types: str | None = None, relationship_types: str | None = None,
-                   focus: str | None = None, depth: int = 1, include_disabled: bool = False) -> dict:
+                   focus: str | None = None, depth: int = 1, include_disabled: bool = False,
+                   workspace: str | None = None) -> dict:
     """Nodes and edges for visualisation, optionally filtered or centred on one node."""
-    store = svc().store
+    store = graph_store(workspace)
     types = set(filter(None, (object_types or "").split(",")))
     rels = set(filter(None, (relationship_types or "").split(",")))
     edges = store.all_edges(include_disabled)
@@ -213,7 +241,7 @@ def ontology_graph(object_types: str | None = None, relationship_types: str | No
 @app.post("/ontology/subgraph")
 def ontology_subgraph(body: dict) -> dict:
     """Nodes and edges by id: used to draw the subgraph an agent run touched."""
-    store = svc().store
+    store = graph_store(body.get("workspace"))
     edge_ids = set(body.get("edge_ids") or [])
     edges = [e for e in store.all_edges(True) if e["edge_id"] in edge_ids]
     ids = set(body.get("node_ids") or []) | {e["source_node_id"] for e in edges} | {e["target_node_id"] for e in edges}
@@ -238,6 +266,87 @@ def ontology_reload() -> dict:
     """Re-ingest the ontology definition file (after editing it) and clear experiment switches."""
     summary = ingest(svc().db, svc().settings.ontology_path)
     return {"loaded": summary, "profiles": svc().profiles.status()}
+
+
+# ---------------------------------------------------------------- raw data
+
+TABLE_NOTES = {
+    "kg_node": "Ontology instances: one row per object in the graph.",
+    "kg_edge": "Ontology instances: one row per relationship between two objects.",
+    "ontology_meta": "Which ontology is loaded, and its version.",
+    "ontology_object_type": "Ontology model: the kinds of object that can exist.",
+    "ontology_relationship_type": "Ontology model: the kinds of relationship and what they may connect.",
+    "ontology_property_def": "Ontology model: the properties each object or relationship type may carry.",
+    "kg_disabled": "Experiment switch: relationship types or edges currently hidden from tools.",
+    "kg_profile": "Flattened GraphRAG profiles, one per object (benchmark ontology only).",
+    "service_case": "Operational data: synthetic service cases.",
+    "diagnostic_execution": "Operational data: each diagnostic action performed in a case.",
+    "work_order": "Operational data: repairs and part shipments raised from cases.",
+}
+
+
+def data_db(workspace: str | None):
+    if workspace in (None, "", "benchmark"):
+        return svc().db
+    if workspace == "troubleshooting":
+        return troubleshooting.ws().db
+    raise HTTPException(400, f"Unknown workspace '{workspace}'. Use 'benchmark' or 'troubleshooting'.")
+
+
+def data_columns(db, table: str) -> list[dict]:
+    return db.query("SELECT column_name AS name, data_type AS type FROM information_schema.columns "
+                    "WHERE table_name = ? ORDER BY ordinal_position", [table])
+
+
+def data_table_names(db) -> list[str]:
+    """Only real tables and the semantic views are browsable; the name is never taken from the request as SQL."""
+    names = [r["table_name"] for r in db.query(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' ORDER BY table_name")]
+    return [n for n in names if n in TABLE_NOTES or n.startswith("sv_")]
+
+
+@app.get("/data/tables")
+def data_tables(workspace: str | None = None) -> dict:
+    db = data_db(workspace)
+    tables = []
+    for name in data_table_names(db):
+        rows = db.scalar(f"SELECT COUNT(*) FROM {name}")
+        if rows == 0 and name not in ("kg_disabled",):
+            continue  # e.g. operational tables in the troubleshooting database
+        tables.append({"name": name, "rows": rows, "columns": data_columns(db, name),
+                       "note": TABLE_NOTES.get(name, "Semantic view: the governed columns agents may query.")})
+    return {"workspace": workspace or "benchmark", "database": db.path, "tables": tables}
+
+
+@app.get("/data/table/{name}")
+def data_table(name: str, workspace: str | None = None, limit: int = 50, offset: int = 0, search: str | None = None,
+               column: str | None = None, value: str | None = None) -> dict:
+    """A page of raw rows. Optional: text search across all columns, or an exact match on one column."""
+    db = data_db(workspace)
+    if name not in data_table_names(db):
+        raise HTTPException(404, f"No browsable table '{name}'.")
+    columns = data_columns(db, name)
+    limit, offset = max(1, min(limit, 200)), max(0, offset)
+    clauses, params = [], []
+    if search:
+        clauses.append("(" + " OR ".join(f"CAST({c['name']} AS VARCHAR) ILIKE ?" for c in columns) + ")")
+        params += [f"%{search}%"] * len(columns)
+    if column and value is not None:
+        if column not in [c["name"] for c in columns]:
+            raise HTTPException(400, f"Table {name} has no column '{column}'.")
+        clauses.append(f"CAST({column} AS VARCHAR) = ?")
+        params.append(value)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    total = db.scalar(f"SELECT COUNT(*) FROM {name}{where}", params)
+    order = columns[0]["name"]
+    rows = db.query(f"SELECT * FROM {name}{where} ORDER BY {order} LIMIT {limit} OFFSET {offset}", params)
+    for row in rows:
+        row.pop("embedding", None)  # hundreds of numbers per row; not useful to read
+        for key, cell in row.items():
+            if not isinstance(cell, (str, int, float, bool, type(None))):
+                row[key] = str(cell)
+    return {"table": name, "columns": [c for c in columns if c["name"] != "embedding"], "rows": rows, "total": total,
+            "limit": limit, "offset": offset}
 
 
 # ---------------------------------------------------------------- semantic
@@ -423,6 +532,8 @@ def evaluation_trace(run_id: str, task_id: str, config: str, repeat: int = 1) ->
             return result
     raise HTTPException(404, "No such result in this run.")
 
+
+app.include_router(troubleshooting.router)
 
 # The JavaScript frontend. Mounted last so every API route above takes precedence.
 app.mount("/", StaticFiles(directory=str(ROOT / "web"), html=True), name="web")

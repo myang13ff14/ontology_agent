@@ -142,6 +142,11 @@ def test_rules_are_three_valued_and_safe():
     undecided = rules.evaluate("a == true and b >= 20", {"a": True})
     assert undecided["satisfied"] is None and undecided["missing_context"] == ["b"]
     assert rules.evaluate("x in ['p', 'q'] or not y", {"x": "z", "y": False})["satisfied"] is True
+    # An unknown fact only matters when the outcome depends on it.
+    assert rules.evaluate("a == 1 or b == 2", {"a": 1})["satisfied"] is True
+    assert rules.evaluate("a == 1 or b == 2", {"a": 9})["satisfied"] is None
+    assert rules.evaluate("a == 1 and b == 2", {"a": 9}) == {"satisfied": False, "missing_context": [], "expression": "a == 1 and b == 2"}
+    assert rules.evaluate("not (a == 1 and b == 2)", {"b": 2})["satisfied"] is None
     for bad in ["__import__('os').system('ls')", "a.b == 1", "a if b else c", "lambda: 1", ""]:
         with pytest.raises(rules.RuleError):
             rules.evaluate(bad, {"a": 1, "b": 1, "c": 1})

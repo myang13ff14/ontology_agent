@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from ..llm.base import LLMClient, LLMError
 from ..llm.factory import describe, make_llm
 from ..services import Services
-from .configs import CONFIGS, system_prompt
+from .configs import CONFIGS, AgentConfig, system_prompt
 
 MAX_RESULT_CHARS = 24000
 
@@ -36,31 +36,34 @@ class AgentRuntime:
         return self._llm
 
     def tools_for(self, config_key: str, disabled_tools: list[str] | None = None,
-                  extra_tools: list[str] | None = None) -> list[str]:
-        names = list(CONFIGS[config_key].tools) + [t for t in extra_tools or [] if t not in CONFIGS[config_key].tools]
+                  extra_tools: list[str] | None = None, config: AgentConfig | None = None) -> list[str]:
+        config = config or CONFIGS[config_key]
+        names = list(config.tools) + [t for t in extra_tools or [] if t not in config.tools]
         return [n for n in names if self.services.registry.has(n) and n not in set(disabled_tools or [])]
 
     def run(self, question: str, config_key: str, *, llm: LLMClient | None = None,
             disabled_tools: list[str] | None = None, extra_tools: list[str] | None = None,
             description_overrides: dict[str, str] | None = None, max_tool_calls: int | None = None,
             tool_timeout_s: float | None = None, run_timeout_s: float | None = None,
-            history: list[dict] | None = None) -> dict:
+            history: list[dict] | None = None, config: AgentConfig | None = None, system: str | None = None) -> dict:
         """Answer one question. `history` is earlier turns to replay first (see agents/memory.py).
 
         The returned trace has a private "_turn_messages" entry: the messages this turn
         added, for the caller to store as memory. It is not JSON and must not be sent out.
         """
-        if config_key not in CONFIGS:
-            raise KeyError(f"Unknown agent configuration '{config_key}'. Valid: {sorted(CONFIGS)}")
+        if config is None:
+            if config_key not in CONFIGS:
+                raise KeyError(f"Unknown agent configuration '{config_key}'. Valid: {sorted(CONFIGS)}")
+            config = CONFIGS[config_key]
         settings, registry = self.services.settings, self.services.registry
-        config = CONFIGS[config_key]
         llm = llm or self.llm()
         max_tool_calls = settings.max_tool_calls if max_tool_calls is None else max_tool_calls
         run_timeout_s = run_timeout_s or settings.run_timeout_s
-        tool_names = self.tools_for(config_key, disabled_tools, extra_tools)
+        tool_names = self.tools_for(config_key, disabled_tools, extra_tools, config)
         tools = registry.llm_tools(tool_names, description_overrides)
-        terminology = self.services.terminology.render_for_prompt() if config.uses_terminology_prompt else ""
-        system = system_prompt(config, terminology)
+        if system is None:
+            terminology = self.services.terminology.render_for_prompt() if config.uses_terminology_prompt else ""
+            system = system_prompt(config, terminology)
 
         started = time.perf_counter()
         history = list(history or [])

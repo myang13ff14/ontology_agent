@@ -1,0 +1,659 @@
+# "Ideal data" troubleshooting ontology, modelled on the design diagram. ALL DATA IS SYNTHETIC.
+#
+# Two layers:
+#   knowledge (stable):        Device, Symptom, Checklist, CheckDefinition, Solution
+#   case (created per case):   SupportCase, SymptomAssessment, CheckResult
+#
+# What "ideal" means here:
+#   1. Every symptom has a definition, typical expressions, vague expressions and distinguishing
+#      conditions, and the conditions reference real check definitions and result codes.
+#   2. Every check definition lists all of its possible results; a check result in a case may
+#      only use one of those codes.
+#   3. Assessments are append-only: a new assessment SUPERSEDES the previous one, which is kept,
+#      so the reasoning can be replayed.
+#   4. Every assessment points back at the check results it is based on (complete evidence chain).
+#
+# Anything marked "ADDITION, not in the diagram" is a suggestion and can be removed without
+# affecting the rest.
+
+ontology:
+  name: troubleshooting_ideal
+  version: "0.1.0"
+  description: Laptop troubleshooting ontology modelled on the design diagram, with ideal example data.
+  source: synthetic (designed from the diagram)
+  synthetic: true
+
+object_types:
+  - name: SupportCase
+    description: A customer request, from the original description through to the selected solution.
+    properties:
+      - {name: raw_description, type: string, required: true, description: "The customer's original description, verbatim and never rewritten."}
+      - {name: status, type: string, required: true, description: "Handling status: in_progress, resolved or escalated."}
+      - {name: channel, type: string, description: "Contact channel: phone, chat or email."}
+      - {name: opened_at, type: string, description: Time opened (ISO 8601).}
+      - {name: closed_at, type: string, description: Time closed (ISO 8601).}
+  - name: Device
+    description: The device model a case concerns.
+    properties:
+      - {name: product_line, type: string, description: Product line.}
+      - {name: release_year, type: number, description: Year the model was released.}
+      - {name: removable_battery, type: boolean, description: Whether the customer can remove the battery without tools.}
+      - {name: charger_wattage, type: number, description: Wattage of the bundled AC adapter.}
+  - name: SymptomAssessment
+    description: One judgement, at one moment, of which symptom the customer actually has. Append-only.
+    properties:
+      - {name: sequence, type: number, required: true, description: "Order within the case, starting at 1."}
+      - {name: status, type: string, required: true, description: "candidates, narrowed, confirmed or superseded."}
+      - {name: evidence, type: string, required: true, description: One sentence stating what this judgement rests on.}
+      - {name: assessed_at, type: string, required: true, description: Time of the judgement (ISO 8601).}
+  - name: Symptom
+    description: A standard symptom. The normalised problem type that customers' varied wording maps to.
+    properties:
+      - {name: typical_expressions, type: list, required: true, description: How customers say it when they describe it clearly.}
+      - {name: vague_expressions, type: list, description: "Common wording that is not enough to identify the symptom (it usually fits several symptoms)."}
+      - {name: distinguishing_conditions, type: list, required: true, description: "List of {check, expect, note}: a check definition id and the result code it must have. All met = symptom confirmed."}
+      - {name: severity, type: string, description: "low, medium, high or safety."}
+  - name: Checklist
+    description: The ordered checks for one symptom.
+    properties:
+      - {name: purpose, type: string, description: What the checklist is for.}
+      - {name: owner, type: string, description: Team that maintains it.}
+  - name: CheckDefinition
+    description: A reusable check. How to ask, how to do it, and every result it can have.
+    properties:
+      - {name: question, type: string, required: true, description: Standard wording for asking the customer.}
+      - {name: method, type: string, description: How to perform the check.}
+      - {name: possible_results, type: list, required: true, description: "Every possible result, as a list of {code, label}."}
+      - {name: evidence_type, type: string, description: "customer_statement, customer_observation or system_reading."}
+      - {name: estimated_minutes, type: number, description: Typical time needed.}
+      - {name: safety_note, type: string, description: Safety warning.}
+  - name: CheckResult
+    description: The result of performing one check in one case.
+    properties:
+      - {name: result, type: string, required: true, description: A result code listed by the check definition it is a result of.}
+      - {name: evidence, type: string, required: true, description: "The customer's words or the observed fact."}
+      - {name: executed_at, type: string, required: true, description: Time the check was performed (ISO 8601).}
+  - name: Solution
+    description: Something that can be delivered to the customer to resolve the problem.
+    properties:
+      - {name: solution_type, type: string, description: "remote_guidance, part_shipment or depot_repair."}
+      - {name: steps, type: list, description: Steps to carry out.}
+      - {name: estimated_minutes, type: number, description: Typical time needed.}
+
+relationship_types:
+  # ---- the 10 relationships in the diagram ----
+  - {name: INVOLVES_DEVICE, description: The case concerns this device., source_types: [SupportCase], target_types: [Device]}
+  - {name: HAS_ASSESSMENT, description: The case contains this assessment record., source_types: [SupportCase], target_types: [SymptomAssessment]}
+  - {name: HAS_CHECK_RESULT, description: The case contains this check result., source_types: [SupportCase], target_types: [CheckResult]}
+  - name: SELECTED_SOLUTION
+    description: The solution chosen for the case.
+    source_types: [SupportCase]
+    target_types: [Solution]
+    properties:
+      - {name: outcome, type: string, description: "resolved, not_resolved or awaiting_customer."}
+  - {name: SUPERSEDES, description: The new assessment replaces an earlier one., source_types: [SymptomAssessment], target_types: [SymptomAssessment]}
+  - name: ASSESSES
+    description: A candidate symptom evaluated by the assessment. One assessment can evaluate several.
+    source_types: [SymptomAssessment]
+    target_types: [Symptom]
+    properties:
+      - {name: verdict, type: string, description: "candidate, supported, ruled_out or confirmed."}
+      - {name: reason, type: string, description: Why that verdict was reached.}
+  - {name: BASED_ON, description: The assessment rests on this check result., source_types: [SymptomAssessment], target_types: [CheckResult]}
+  - name: HAS_CHECKLIST
+    description: A checklist that applies to the symptom. A symptom usually has two or three, each with a different role.
+    source_types: [Symptom]
+    target_types: [Checklist]
+    properties:
+      - {name: role, type: string, description: "ADDITION, not in the diagram. What the checklist is for: triage (confirm the symptom), locate_cause (find what is wrong) or deeper (further or device-specific checks)."}
+      - {name: order, type: number, description: "ADDITION, not in the diagram. Order to work the symptom's checklists in; 1 first."}
+      - {name: applies_when, type: string, description: "ADDITION, not in the diagram. Condition on the device's properties, e.g. removable_battery == true. Empty means it always applies."}
+  - name: CONTAINS_CHECK
+    description: The checklist contains this check.
+    source_types: [Checklist]
+    target_types: [CheckDefinition]
+    properties:
+      - {name: step_order, type: number, description: Position in the checklist.}
+  - {name: RESULT_OF, description: The check definition this result is for., source_types: [CheckResult], target_types: [CheckDefinition]}
+  # ---- ADDITION, not in the diagram ----
+  - name: RESOLVED_BY
+    description: "ADDITION, not in the diagram. A symptom can be resolved by a solution. In the diagram a solution is linked only to a case, so nothing says which solution fits which symptom and an agent cannot choose one."
+    source_types: [Symptom]
+    target_types: [Solution]
+    properties:
+      - {name: condition, type: string, description: "When the solution applies: an expression over check definition ids and result codes, e.g. CK_SPARE_ADAPTER == 'charges'. Empty means always."}
+      - {name: priority, type: number, description: "Order to try solutions in when several apply; 1 first."}
+
+profile_recipes:
+  Symptom: [[HAS_CHECKLIST, CONTAINS_CHECK], [RESOLVED_BY]]
+  Checklist: [[CONTAINS_CHECK], ["~HAS_CHECKLIST"]]
+  SupportCase: [[HAS_ASSESSMENT, ASSESSES], [HAS_CHECK_RESULT, RESULT_OF]]
+
+nodes:
+  # ============================== knowledge layer ==============================
+  # ---- devices ----
+  - {id: DEV_AIR13, type: Device, name: "AeroBook Air 13 (2023)", definition: "Thin and light laptop, charges over USB-C.", synonyms: [Air 13],
+     properties: {product_line: AeroBook Air, release_year: 2023, removable_battery: false, charger_wattage: 65}}
+  - {id: DEV_PRO16, type: Device, name: "AeroBook Pro 16 (2024)", definition: High-performance laptop with a discrete graphics chip., synonyms: [Pro 16],
+     properties: {product_line: AeroBook Pro, release_year: 2024, removable_battery: false, charger_wattage: 140}}
+  - {id: DEV_WORK15, type: Device, name: "WorkMate 15 (2022)", definition: Business laptop with a removable battery., synonyms: [WorkMate 15],
+     properties: {product_line: WorkMate, release_year: 2022, removable_battery: true, charger_wattage: 65}}
+
+  # ---- check definitions ----
+  - id: CK_POWER_LED
+    type: CheckDefinition
+    name: Power indicator light
+    definition: Whether the power light on the laptop comes on when the power button is pressed.
+    properties:
+      question: Please press the power button once. Does the power light on the laptop come on?
+      method: With the adapter connected, press the power button once and watch for 5 seconds.
+      possible_results: [{code: lit, label: The light comes on}, {code: "off", label: The light stays off}]
+      evidence_type: customer_observation
+      estimated_minutes: 1
+  - id: CK_FAN_SOUND
+    type: CheckDefinition
+    name: Fan or startup sound
+    definition: Whether a fan or a startup sound can be heard after pressing the power button.
+    properties:
+      question: After pressing the power button, can you hear the fan spinning or a startup sound?
+      method: Listen close to the underside or the air vent for 10 seconds.
+      possible_results: [{code: heard, label: A fan or startup sound is heard}, {code: silent, label: No sound at all}]
+      evidence_type: customer_observation
+      estimated_minutes: 1
+  - id: CK_SCREEN_PHYSICAL
+    type: CheckDefinition
+    name: Screen surface inspection
+    definition: Whether the screen surface shows cracks, ink-like blotches or pressure marks.
+    properties:
+      question: Please look at the screen surface under a light. Are there any cracks, dark ink-like blotches or pressure marks?
+      method: With the laptop off, shine a torch across the screen at an angle.
+      possible_results: [{code: intact, label: No visible damage}, {code: damaged, label: "Cracks, blotches or pressure marks"}]
+      evidence_type: customer_observation
+      estimated_minutes: 2
+  - id: CK_BRIGHTNESS
+    type: CheckDefinition
+    name: Brightness and display toggle
+    definition: Whether the picture returns after raising the brightness and pressing the display-switch key.
+    properties:
+      question: Please press the brightness-up key several times, then the display-switch key. Is there a picture now?
+      method: Press brightness-up five times, then the display-switch key once.
+      possible_results: [{code: restored, label: The picture is back}, {code: no_change, label: No change}]
+      evidence_type: customer_observation
+      estimated_minutes: 1
+  - id: CK_EXTERNAL_MONITOR
+    type: CheckDefinition
+    name: External monitor test
+    definition: Whether an external monitor shows a picture when connected.
+    properties:
+      question: If you can, please connect an external monitor or a TV. Does it show a picture?
+      method: Connect over HDMI or USB-C, then press the display-switch key.
+      possible_results: [{code: external_ok, label: The external screen shows a picture}, {code: external_blank, label: The external screen is also blank}, {code: unavailable, label: No external screen available}]
+      evidence_type: customer_observation
+      estimated_minutes: 5
+  - id: CK_ADAPTER_LED
+    type: CheckDefinition
+    name: Adapter indicator light
+    definition: Whether the light on the AC adapter is on when it is plugged into the wall.
+    properties:
+      question: Is the small light on the charger on?
+      method: Plug the adapter into a wall outlet and look at its light.
+      possible_results: [{code: lit, label: The light is on}, {code: "off", label: The light is off}, {code: no_led, label: This adapter has no light}]
+      evidence_type: customer_observation
+      estimated_minutes: 1
+  - id: CK_CHARGE_ICON
+    type: CheckDefinition
+    name: Charging status
+    definition: What the system reports about charging once the adapter is connected.
+    properties:
+      question: With the charger plugged in, what does the battery icon say? Is the percentage going up?
+      method: Connect the adapter, wait 2 minutes, then read the battery icon and percentage.
+      possible_results: [{code: charging, label: Charging and the percentage is rising}, {code: plugged_not_charging, label: Plugged in but the percentage is not rising}, {code: no_power_detected, label: No power source detected}]
+      evidence_type: system_reading
+      estimated_minutes: 3
+  - id: CK_SPARE_ADAPTER
+    type: CheckDefinition
+    name: Spare adapter test
+    definition: Whether the laptop charges with a second adapter that is known to work.
+    properties:
+      question: Do you have another charger of the same type that you know works? Does the laptop charge with it?
+      method: Connect a known-good adapter of the same rating and watch for 2 minutes.
+      possible_results: [{code: charges, label: Charges with the other adapter}, {code: still_not, label: Still does not charge}, {code: unavailable, label: No spare adapter available}]
+      evidence_type: customer_observation
+      estimated_minutes: 5
+  - id: CK_POWER_RESET
+    type: CheckDefinition
+    name: Power reset
+    definition: Whether the problem goes away after disconnecting power and holding the power button to drain residual charge.
+    properties:
+      question: Please unplug the charger and everything else, hold the power button for 30 seconds, then plug the charger back in and start the laptop. Is it working now?
+      method: Disconnect the adapter and peripherals, hold the power button for 30 seconds, reconnect and power on.
+      possible_results: [{code: fixed, label: Working normally again}, {code: no_change, label: No change}]
+      evidence_type: customer_observation
+      estimated_minutes: 4
+      safety_note: Never perform on a swollen battery.
+  - id: CK_BATTERY_HEALTH
+    type: CheckDefinition
+    name: Battery health reading
+    definition: The health percentage in the system battery report.
+    properties:
+      question: Please open the battery report. What health percentage does it show?
+      method: Run the built-in battery diagnostic and read the health figure.
+      possible_results: [{code: healthy, label: Health 80% or above}, {code: degraded, label: Health below 80%}]
+      evidence_type: system_reading
+      estimated_minutes: 5
+  - id: CK_RUNTIME
+    type: CheckDefinition
+    name: Runtime on a full charge
+    definition: How long the laptop runs in normal use after a full charge.
+    properties:
+      question: After a full charge, roughly how long does the laptop last in normal use?
+      method: Ask how long it lasted the last time it was fully charged.
+      possible_results: [{code: normal, label: 4 hours or more}, {code: short, label: Under 2 hours}, {code: borderline, label: Between 2 and 4 hours}]
+      evidence_type: customer_statement
+      estimated_minutes: 1
+
+  - id: CK_WALL_OUTLET
+    type: CheckDefinition
+    name: Different wall outlet
+    definition: Whether the problem goes away when the adapter is plugged straight into a different wall outlet.
+    properties:
+      question: Please plug the charger straight into a different wall socket, without an extension lead. Does that change anything?
+      method: Connect the adapter directly to another wall outlet, bypassing power strips, and retry.
+      possible_results: [{code: works, label: Works on the other outlet}, {code: no_change, label: No change}]
+      evidence_type: customer_observation
+      estimated_minutes: 2
+  - id: CK_CHARGE_PORT
+    type: CheckDefinition
+    name: Charging port inspection
+    definition: Whether the charging port is clean and firm, blocked by debris, or damaged.
+    properties:
+      question: Please look into the charging port with a light. Is it clean, is there fluff or dirt inside, or does it look bent or loose?
+      method: Shine a torch into the port and gently check whether the plug sits firmly.
+      possible_results: [{code: clean, label: Clean and firm}, {code: debris, label: Fluff or dirt inside}, {code: damaged, label: "Bent, loose or burnt"}]
+      evidence_type: customer_observation
+      estimated_minutes: 3
+      safety_note: Never push metal objects into the port.
+  - id: CK_ADAPTER_WATTAGE
+    type: CheckDefinition
+    name: Adapter wattage match
+    definition: Whether the wattage printed on the adapter matches what the laptop model needs.
+    properties:
+      question: Please read the wattage printed on the charger label, a number followed by W. What does it say?
+      method: Compare the wattage on the adapter label with the wattage the model requires.
+      possible_results: [{code: matches, label: Same as or higher than required}, {code: lower, label: Lower than required}, {code: unreadable, label: Label missing or unreadable}]
+      evidence_type: customer_observation
+      estimated_minutes: 2
+  - id: CK_CHARGE_LIMIT
+    type: CheckDefinition
+    name: Battery charge limit setting
+    definition: Whether a battery conservation or charge-limit setting is switched on.
+    properties:
+      question: Please open the battery settings. Is there a battery protection or charge limit option, and is it switched on?
+      method: Open the system battery settings and look for a conservation mode or charge threshold.
+      possible_results: [{code: enabled, label: A charge limit is switched on}, {code: disabled, label: No charge limit is active}]
+      evidence_type: system_reading
+      estimated_minutes: 3
+  - id: CK_PERIPHERALS
+    type: CheckDefinition
+    name: Start with nothing connected
+    definition: Whether the laptop starts once every external device is disconnected.
+    properties:
+      question: Please unplug everything except the charger, including USB devices, docks and memory cards, then try to start it. Does it start?
+      method: Disconnect all peripherals, leave only the adapter, and press the power button.
+      possible_results: [{code: starts, label: Starts with nothing connected}, {code: no_change, label: Still does not start}]
+      evidence_type: customer_observation
+      estimated_minutes: 3
+  - id: CK_BATTERY_RESEAT
+    type: CheckDefinition
+    name: Battery reseat
+    definition: Whether removing and refitting the battery changes anything. Only for models with a removable battery.
+    properties:
+      question: Please switch the laptop off, unplug it, slide the battery out, wait ten seconds and fit it back until it clicks. Any change?
+      method: Power off, disconnect the adapter, remove the battery, wait 10 seconds and refit it firmly.
+      possible_results: [{code: fixed, label: Working normally again}, {code: no_change, label: No change}]
+      evidence_type: customer_observation
+      estimated_minutes: 4
+      safety_note: Only with the laptop switched off and unplugged. Never on a swollen battery.
+  - id: CK_BATTERY_CONTACTS
+    type: CheckDefinition
+    name: Battery contact inspection
+    definition: Whether the metal contacts of a removable battery are clean.
+    properties:
+      question: With the battery out, please look at its metal contacts. Are they clean and shiny, or dull, dirty or corroded?
+      method: Remove the battery and inspect the contact strip on the battery and in the bay.
+      possible_results: [{code: clean, label: Clean and shiny}, {code: dirty, label: "Dull, dirty or corroded"}]
+      evidence_type: customer_observation
+      estimated_minutes: 3
+      safety_note: Only with the laptop switched off and unplugged.
+  - id: CK_FLASHLIGHT
+    type: CheckDefinition
+    name: Torch test for a faint image
+    definition: Whether a very faint picture can be seen when a torch is shone at the dark screen.
+    properties:
+      question: In a dim room, please shine a torch at the screen at an angle. Can you make out a very faint picture or text?
+      method: With the laptop on, shine a torch close to the screen at an angle and look for a faint image.
+      possible_results: [{code: faint_image, label: A faint picture is visible}, {code: nothing, label: Nothing visible at all}]
+      evidence_type: customer_observation
+      estimated_minutes: 2
+  - id: CK_CAPS_LOCK
+    type: CheckDefinition
+    name: Caps Lock response
+    definition: Whether the Caps Lock light toggles, which shows the system is running behind the dark screen.
+    properties:
+      question: Please press the Caps Lock key a few times. Does its little light turn on and off?
+      method: Press Caps Lock several times and watch its indicator.
+      possible_results: [{code: toggles, label: The light turns on and off}, {code: no_response, label: The light does not react}, {code: no_indicator, label: This keyboard has no Caps Lock light}]
+      evidence_type: customer_observation
+      estimated_minutes: 1
+  - id: CK_DAMAGE_CAUSE
+    type: CheckDefinition
+    name: Cause of the damage
+    definition: How the screen came to be damaged.
+    properties:
+      question: Do you know how it happened? For example was it dropped, was something pressed against it, or did liquid get on it?
+      method: Ask the customer what happened shortly before the damage appeared.
+      possible_results: [{code: impact, label: Dropped or knocked}, {code: pressure, label: "Something pressed on the lid or screen"}, {code: liquid, label: Liquid got on it}, {code: unknown, label: The customer does not know}]
+      evidence_type: customer_statement
+      estimated_minutes: 1
+  - id: CK_LIQUID_SIGNS
+    type: CheckDefinition
+    name: Signs of liquid
+    definition: Whether there are signs that liquid entered the laptop.
+    properties:
+      question: Is there any sign that liquid got inside, such as stickiness around the keys, a smell, or moisture near the hinges?
+      method: Look and feel around the keyboard, hinges and vents for residue or moisture.
+      possible_results: [{code: present, label: Signs of liquid}, {code: none, label: No sign of liquid}]
+      evidence_type: customer_observation
+      estimated_minutes: 2
+      safety_note: If liquid is present, switch the laptop off and do not charge it.
+  - id: CK_BACKGROUND_APPS
+    type: CheckDefinition
+    name: Battery usage by app
+    definition: Whether one app accounts for a large share of battery use.
+    properties:
+      question: Please open the battery usage list. Is any single app using more than about a third of the battery?
+      method: Open the system battery usage screen and read the top entry.
+      possible_results: [{code: heavy_app, label: One app uses a third or more}, {code: none, label: No single app stands out}]
+      evidence_type: system_reading
+      estimated_minutes: 3
+  - id: CK_POWER_MODE
+    type: CheckDefinition
+    name: Power mode setting
+    definition: Which power mode the laptop is running in.
+    properties:
+      question: In the battery settings, which power mode is selected?
+      method: Open the system power settings and read the selected mode.
+      possible_results: [{code: performance, label: Best performance}, {code: balanced, label: Balanced}, {code: saver, label: Battery saver}]
+      evidence_type: system_reading
+      estimated_minutes: 2
+
+  # ---- checklists (each symptom has two or three, with different roles) ----
+  - {id: CL_NO_POWER_TRIAGE, type: Checklist, name: No Power Triage, definition: Establish whether the laptop is getting any power at all., properties: {purpose: Tell "no power" apart from "powered but no picture", owner: Power Team}}
+  - {id: CL_NO_POWER_SUPPLY, type: Checklist, name: No Power Supply Path, definition: "Follow the power from the wall to the laptop: outlet, adapter, port.", properties: {purpose: Find where on the supply path power is lost, owner: Power Team}}
+  - {id: CL_NO_POWER_RECOVERY, type: Checklist, name: No Power Recovery, definition: Steps that can bring a laptop that has power but will not start back to life., properties: {purpose: Clear lock-ups and rule out attached devices, owner: Power Team}}
+  - {id: CL_BLACK_SCREEN_TRIAGE, type: Checklist, name: Black Screen Triage, definition: Establish that the laptop is on and the screen is undamaged., properties: {purpose: Tell a black screen apart from no power and from screen damage, owner: Display Team}}
+  - {id: CL_BLACK_SCREEN_DISPLAY, type: Checklist, name: Black Screen Display Path, definition: "Work out which part of the display path has failed: settings, backlight, panel or graphics.", properties: {purpose: Locate the fault on the display path, owner: Display Team}}
+  - {id: CL_BLACK_SCREEN_SYSTEM, type: Checklist, name: Black Screen System State, definition: Establish whether the system is actually running behind the dark screen., properties: {purpose: Tell a display fault apart from a system that has not started, owner: Display Team}}
+  - {id: CL_SCREEN_DAMAGE_CONFIRM, type: Checklist, name: Screen Damage Confirmation, definition: Confirm the physical damage and how it happened., properties: {purpose: Confirm damage and record its cause for the repair, owner: Display Team}}
+  - {id: CL_SCREEN_DAMAGE_SCOPE, type: Checklist, name: Screen Damage Scope, definition: Establish whether anything beyond the screen is affected., properties: {purpose: Decide between a screen repair and a wider repair, owner: Display Team}}
+  - {id: CL_NOT_CHARGING_TRIAGE, type: Checklist, name: Not Charging Triage, definition: Establish that the laptop sees the adapter but is not charging., properties: {purpose: Confirm the symptom and check the adapter is live, owner: Power Team}}
+  - {id: CL_NOT_CHARGING_POWER_PATH, type: Checklist, name: Not Charging Power Path, definition: "Follow the power from the wall to the laptop: outlet, adapter rating, port, spare adapter.", properties: {purpose: Find whether the adapter or the port is at fault, owner: Power Team}}
+  - {id: CL_NOT_CHARGING_BATTERY, type: Checklist, name: Not Charging Battery and Settings, definition: Check the battery itself and the settings that can stop it charging., properties: {purpose: "Find whether the battery, a lock-up or a setting is at fault", owner: Power Team}}
+  - {id: CL_BATTERY_DRAIN_TRIAGE, type: Checklist, name: Short Battery Life Triage, definition: Establish that the battery charges but does not last., properties: {purpose: Tell short battery life apart from not charging, owner: Power Team}}
+  - {id: CL_BATTERY_DRAIN_USAGE, type: Checklist, name: Short Battery Life Usage and Health, definition: Check battery wear and what is using the power., properties: {purpose: Tell battery wear apart from usage and settings, owner: Power Team}}
+  - {id: CL_REMOVABLE_BATTERY, type: Checklist, name: Removable Battery Checks, definition: Extra checks that are only possible when the customer can take the battery out., properties: {purpose: Rule out a poorly seated battery or dirty contacts, owner: Power Team}}
+
+  # ---- standard symptoms ----
+  - id: S_NO_POWER
+    type: Symptom
+    name: Laptop Won't Power On
+    definition: Pressing the power button produces no sign of power, with no indicator light and no fan sound.
+    synonyms: [no power, won't turn on, does not start, dead when I press power]
+    properties:
+      typical_expressions: ["Nothing happens when I press the power button, not even a light", "It won't turn on even when plugged in, and there is no sound at all"]
+      vague_expressions: [my computer is dead, my laptop is broken, the screen is dead, it won't work]
+      distinguishing_conditions:
+        - {check: CK_POWER_LED, expect: "off", note: No indicator light means the laptop is not getting power}
+        - {check: CK_FAN_SOUND, expect: silent, note: No fan sound rules out "powered but no picture"}
+      severity: high
+  - id: S_BLACK_SCREEN
+    type: Symptom
+    name: Black Screen
+    definition: The device is powered (light on or fan audible) and the screen is undamaged, but the built-in screen shows no picture.
+    synonyms: [blank screen, no display, no picture, screen stays black]
+    properties:
+      typical_expressions: ["The power light is on and the fan is running, but the screen stays black", "It makes the startup sound but there is no picture"]
+      vague_expressions: [the screen is dead, the screen is broken, my laptop is broken, it won't work]
+      distinguishing_conditions:
+        - {check: CK_POWER_LED, expect: lit, note: "The light is on, so the laptop has power"}
+        - {check: CK_SCREEN_PHYSICAL, expect: intact, note: An undamaged screen rules out physical damage}
+      severity: high
+  - id: S_SCREEN_DAMAGE
+    type: Symptom
+    name: Physical Screen Damage
+    definition: The screen surface is cracked, leaking or dented, causing a distorted or missing picture.
+    synonyms: [cracked screen, broken screen, smashed display, screen leaking]
+    properties:
+      typical_expressions: ["I dropped it and there is a crack across the screen", "There is a black blotch on the screen that looks like spilled ink"]
+      vague_expressions: [the screen is dead, the screen is broken, the screen looks weird]
+      distinguishing_conditions:
+        - {check: CK_SCREEN_PHYSICAL, expect: damaged, note: Visible damage is enough to confirm}
+      severity: high
+  - id: S_NOT_CHARGING
+    type: Symptom
+    name: Laptop Not Charging
+    definition: The battery percentage does not rise when the adapter is connected.
+    synonyms: [not charging, won't charge, battery not charging, charger does nothing]
+    properties:
+      typical_expressions: ["It is plugged in but the percentage never goes up", "It says plugged in, not charging"]
+      vague_expressions: [there is a problem with my battery, my charger is broken, it has no power]
+      distinguishing_conditions:
+        - {check: CK_CHARGE_ICON, expect: plugged_not_charging, note: The system sees the adapter but the percentage does not rise}
+      severity: medium
+  - id: S_BATTERY_DRAIN
+    type: Symptom
+    name: Short Battery Life
+    definition: The battery charges normally but runs down much faster than expected.
+    synonyms: [battery drains quickly, poor battery life, battery dies fast, battery doesn't last]
+    properties:
+      typical_expressions: ["A full charge only lasts about an hour", "The battery drops 50% in half an hour"]
+      vague_expressions: [there is a problem with my battery, it has no power, my battery is broken]
+      distinguishing_conditions:
+        - {check: CK_CHARGE_ICON, expect: charging, note: "It charges normally, which rules out not charging"}
+        - {check: CK_RUNTIME, expect: short, note: Under 2 hours on a full charge}
+      severity: low
+
+  # ---- solutions ----
+  - {id: SOL_POWER_RESET, type: Solution, name: Power Reset, definition: Drain residual charge to clear a protective lock-up of the main board., properties: {solution_type: remote_guidance, estimated_minutes: 5, steps: [Unplug the adapter and all peripherals, Hold the power button for 30 seconds, Reconnect the adapter and power on]}}
+  - {id: SOL_REPLACE_ADAPTER, type: Solution, name: Replace AC Adapter, definition: Ship a new adapter for the customer to swap in., properties: {solution_type: part_shipment, estimated_minutes: 6, steps: [Confirm the model and adapter wattage, Create a part shipment order, Tell the customer what to do with the old adapter]}}
+  - {id: SOL_REPLACE_BATTERY, type: Solution, name: Replace Battery, definition: Replace a worn battery. Shipped for removable batteries; depot repair otherwise., properties: {solution_type: part_shipment, estimated_minutes: 8, steps: [Check whether the battery is removable, "If removable, ship a battery", "If not, arrange a depot repair"]}}
+  - {id: SOL_POWER_SETTINGS, type: Solution, name: Optimise Power Settings, definition: Adjust power-hungry settings and close apps that drain the battery., properties: {solution_type: remote_guidance, estimated_minutes: 8, steps: [Open the battery usage list, Close apps that drain the battery in the background, Switch to the power-saving mode]}}
+  - {id: SOL_GPU_DRIVER, type: Solution, name: Update or Roll Back Graphics Driver, definition: "When an external screen is blank too, rule out the graphics driver first.", properties: {solution_type: remote_guidance, estimated_minutes: 10, steps: [Start in safe mode, Roll back or reinstall the graphics driver, Restart and check]}}
+  - {id: SOL_REPAIR_DISPLAY, type: Solution, name: Depot Repair for Display, definition: The built-in panel or its cable has failed and needs replacing at the depot., properties: {solution_type: depot_repair, estimated_minutes: 8, steps: [Check warranty status, Create a depot repair order, Remind the customer to back up their data]}}
+  - {id: SOL_REPAIR_MAINBOARD, type: Solution, name: Depot Repair for Main Board, definition: "No power at all and a reset did not help, so the power circuit and main board need testing.", properties: {solution_type: depot_repair, estimated_minutes: 8, steps: [Check warranty status, Create a depot repair order, Remind the customer to back up their data]}}
+
+  - {id: SOL_USE_OTHER_OUTLET, type: Solution, name: Use a Working Wall Outlet, definition: The original outlet or power strip is not delivering power., properties: {solution_type: remote_guidance, estimated_minutes: 3, steps: [Keep the adapter in the outlet that works, Stop using the faulty outlet or power strip, Have the faulty outlet checked]}}
+  - {id: SOL_CLEAN_PORT, type: Solution, name: Clean the Charging Port, definition: Debris in the charging port is stopping the plug from making contact., properties: {solution_type: remote_guidance, estimated_minutes: 6, steps: [Switch the laptop off and unplug it, Loosen the debris with a wooden toothpick or blow it out, Reconnect the adapter firmly]}}
+  - {id: SOL_REPAIR_PORT, type: Solution, name: Depot Repair for Charging Port, definition: The charging port is bent, loose or burnt and must be replaced at the depot., properties: {solution_type: depot_repair, estimated_minutes: 8, steps: [Check warranty status, Create a depot repair order, Tell the customer to stop using the damaged port]}}
+  - {id: SOL_DISABLE_CHARGE_LIMIT, type: Solution, name: Turn Off the Charge Limit, definition: A battery protection setting is holding the charge below 100% on purpose., properties: {solution_type: remote_guidance, estimated_minutes: 4, steps: [Open the battery settings, Switch off the charge limit or conservation mode, "Explain that the limit protects battery life, so it can be left on if preferred"]}}
+  - {id: SOL_REMOVE_PERIPHERAL, type: Solution, name: Remove the Faulty Peripheral, definition: An attached device is stopping the laptop from starting., properties: {solution_type: remote_guidance, estimated_minutes: 6, steps: [Start the laptop with nothing connected, Reconnect devices one at a time, Stop using the device that brings the problem back]}}
+  - {id: SOL_CLEAN_BATTERY_CONTACTS, type: Solution, name: Clean the Battery Contacts, definition: Dirty contacts on a removable battery give a poor connection., properties: {solution_type: remote_guidance, estimated_minutes: 6, steps: [Switch the laptop off and remove the battery, Wipe the contacts with a dry lint-free cloth, Refit the battery until it clicks]}}
+  - {id: SOL_REPAIR_LIQUID, type: Solution, name: Depot Repair for Liquid Damage, definition: Liquid has entered the laptop and the whole unit needs inspection., properties: {solution_type: depot_repair, estimated_minutes: 8, steps: [Tell the customer to switch off and not charge the laptop, Create a depot repair order marked liquid damage, Explain that liquid damage may not be covered by warranty]}}
+
+  # ============================== case layer (ideal examples) ==============================
+  # ---- case 1: vague description -> narrowed step by step -> confirmed ----
+  - {id: CASE_001, type: SupportCase, name: "Case 001: screen shows nothing", definition: "A vague description, confirmed as Black Screen over three assessments.",
+     properties: {raw_description: My computer screen is dead, status: resolved, channel: phone, opened_at: "2026-03-02T09:10:00", closed_at: "2026-03-02T09:31:00"}}
+  - {id: AS_001_1, type: SymptomAssessment, name: Case 001 assessment 1, definition: "Initial judgement: three candidates.",
+     properties: {sequence: 1, status: superseded, evidence: "The customer only said the screen is dead, which is a vague expression of three symptoms. No check results yet.", assessed_at: "2026-03-02T09:11:00"}}
+  - {id: CR_001_1, type: CheckResult, name: "Case 001 check 1: power indicator light", properties: {result: lit, evidence: "Customer: the light is on, it's white.", executed_at: "2026-03-02T09:13:00"}}
+  - {id: CR_001_2, type: CheckResult, name: "Case 001 check 2: screen surface inspection", properties: {result: intact, evidence: "Customer: no cracks, and I don't see any dark patches.", executed_at: "2026-03-02T09:16:00"}}
+  - {id: AS_001_2, type: SymptomAssessment, name: Case 001 assessment 2, definition: "Narrowed: only Black Screen is left.",
+     properties: {sequence: 2, status: superseded, evidence: "The power light is on, which rules out no power; the screen is undamaged, which rules out physical damage.", assessed_at: "2026-03-02T09:17:00"}}
+  - {id: CR_001_3, type: CheckResult, name: "Case 001 check 3: external monitor test", properties: {result: external_ok, evidence: "Customer: it shows a picture on my TV.", executed_at: "2026-03-02T09:24:00"}}
+  - {id: AS_001_3, type: SymptomAssessment, name: Case 001 assessment 3, definition: "Confirmed: Black Screen, with the fault on the built-in display side.",
+     properties: {sequence: 3, status: confirmed, evidence: "Both distinguishing conditions of Black Screen are met; the external screen works, so the laptop and its graphics are fine.", assessed_at: "2026-03-02T09:25:00"}}
+
+  # ---- case 2: clear description -> one check confirms the symptom, the checklist locates the cause ----
+  - {id: CASE_002, type: SupportCase, name: "Case 002: plugged in, not charging", definition: "A clear description, confirmed as Not Charging with one check.",
+     properties: {raw_description: "The charger is plugged in and it says plugged in, but the battery has been stuck at 40% and won't go up", status: resolved, channel: chat, opened_at: "2026-03-03T14:02:00", closed_at: "2026-03-03T14:15:00"}}
+  - {id: AS_002_1, type: SymptomAssessment, name: Case 002 assessment 1, definition: "Initial judgement: the description matches a typical expression of Not Charging.",
+     properties: {sequence: 1, status: superseded, evidence: "The description closely matches a typical expression of Not Charging; to be confirmed by a check.", assessed_at: "2026-03-03T14:03:00"}}
+  - {id: CR_002_1, type: CheckResult, name: "Case 002 check 1: charging status", properties: {result: plugged_not_charging, evidence: "Customer screenshot: the battery icon reads plugged in, not charging.", executed_at: "2026-03-03T14:05:00"}}
+  - {id: AS_002_2, type: SymptomAssessment, name: Case 002 assessment 2, definition: "Confirmed: Not Charging.",
+     properties: {sequence: 2, status: confirmed, evidence: "Charging status is plugged in, not charging, which meets the distinguishing condition of Not Charging.", assessed_at: "2026-03-03T14:06:00"}}
+  - {id: CR_002_2, type: CheckResult, name: "Case 002 check 2: adapter indicator light", properties: {result: lit, evidence: "Customer: the light on the charger is on.", executed_at: "2026-03-03T14:07:00"}}
+  - {id: CR_002_3, type: CheckResult, name: "Case 002 check 3: spare adapter test", properties: {result: charges, evidence: "Customer: it started charging as soon as I used my colleague's charger.", executed_at: "2026-03-03T14:11:00"}}
+
+  # ---- case 3: first judgement wrong -> overturned by a check result -> revised ----
+  - {id: CASE_003, type: SupportCase, name: "Case 003: battery problem", definition: "First judged as Not Charging, then revised to Short Battery Life when a check result contradicted it.",
+     properties: {raw_description: "There's a problem with my battery, it keeps running out of power", status: resolved, channel: phone, opened_at: "2026-03-05T10:20:00", closed_at: "2026-03-05T10:44:00"}}
+  - {id: AS_003_1, type: SymptomAssessment, name: Case 003 assessment 1, definition: "Initial judgement: two candidates, leaning towards Not Charging.",
+     properties: {sequence: 1, status: superseded, evidence: "A problem with my battery is a vague expression of both Not Charging and Short Battery Life; keeps running out of power leans slightly towards Not Charging.", assessed_at: "2026-03-05T10:21:00"}}
+  - {id: CR_003_1, type: CheckResult, name: "Case 003 check 1: charging status", properties: {result: charging, evidence: "Customer: it says charging, and after a while it gets to 100%.", executed_at: "2026-03-05T10:25:00"}}
+  - {id: CR_003_2, type: CheckResult, name: "Case 003 check 2: runtime on a full charge", properties: {result: short, evidence: "Customer: after a full charge it lasts about forty minutes.", executed_at: "2026-03-05T10:27:00"}}
+  - {id: AS_003_2, type: SymptomAssessment, name: Case 003 assessment 2, definition: "Revised: Short Battery Life. The earlier lean towards Not Charging is ruled out.",
+     properties: {sequence: 2, status: confirmed, evidence: "It charges normally, which rules out Not Charging; under 2 hours on a full charge meets every distinguishing condition of Short Battery Life.", assessed_at: "2026-03-05T10:28:00"}}
+  - {id: CR_003_3, type: CheckResult, name: "Case 003 check 3: battery health reading", properties: {result: degraded, evidence: "Customer reads from the battery report: health 61%.", executed_at: "2026-03-05T10:35:00"}}
+
+edges:
+  # ---- symptom -> checklists (role, order, optional device condition) ----
+  - {source: S_NO_POWER, type: HAS_CHECKLIST, target: CL_NO_POWER_TRIAGE, properties: {role: triage, order: 1}}
+  - {source: S_NO_POWER, type: HAS_CHECKLIST, target: CL_NO_POWER_SUPPLY, properties: {role: locate_cause, order: 2}}
+  - {source: S_NO_POWER, type: HAS_CHECKLIST, target: CL_NO_POWER_RECOVERY, properties: {role: deeper, order: 3}}
+  - {source: S_BLACK_SCREEN, type: HAS_CHECKLIST, target: CL_BLACK_SCREEN_TRIAGE, properties: {role: triage, order: 1}}
+  - {source: S_BLACK_SCREEN, type: HAS_CHECKLIST, target: CL_BLACK_SCREEN_DISPLAY, properties: {role: locate_cause, order: 2}}
+  - {source: S_BLACK_SCREEN, type: HAS_CHECKLIST, target: CL_BLACK_SCREEN_SYSTEM, properties: {role: deeper, order: 3}}
+  - {source: S_SCREEN_DAMAGE, type: HAS_CHECKLIST, target: CL_SCREEN_DAMAGE_CONFIRM, properties: {role: triage, order: 1}}
+  - {source: S_SCREEN_DAMAGE, type: HAS_CHECKLIST, target: CL_SCREEN_DAMAGE_SCOPE, properties: {role: locate_cause, order: 2}}
+  - {source: S_NOT_CHARGING, type: HAS_CHECKLIST, target: CL_NOT_CHARGING_TRIAGE, properties: {role: triage, order: 1}}
+  - {source: S_NOT_CHARGING, type: HAS_CHECKLIST, target: CL_NOT_CHARGING_POWER_PATH, properties: {role: locate_cause, order: 2}}
+  - {source: S_NOT_CHARGING, type: HAS_CHECKLIST, target: CL_NOT_CHARGING_BATTERY, properties: {role: deeper, order: 3}}
+  - {source: S_BATTERY_DRAIN, type: HAS_CHECKLIST, target: CL_BATTERY_DRAIN_TRIAGE, properties: {role: triage, order: 1}}
+  - {source: S_BATTERY_DRAIN, type: HAS_CHECKLIST, target: CL_BATTERY_DRAIN_USAGE, properties: {role: locate_cause, order: 2}}
+  - {source: S_BATTERY_DRAIN, type: HAS_CHECKLIST, target: CL_REMOVABLE_BATTERY, properties: {role: deeper, order: 3, applies_when: "removable_battery == true"}}
+
+  # ---- checklist -> checks ----
+  - {source: CL_NO_POWER_TRIAGE, type: CONTAINS_CHECK, target: CK_POWER_LED, properties: {step_order: 1}}
+  - {source: CL_NO_POWER_TRIAGE, type: CONTAINS_CHECK, target: CK_FAN_SOUND, properties: {step_order: 2}}
+  - {source: CL_NO_POWER_SUPPLY, type: CONTAINS_CHECK, target: CK_ADAPTER_LED, properties: {step_order: 1}}
+  - {source: CL_NO_POWER_SUPPLY, type: CONTAINS_CHECK, target: CK_WALL_OUTLET, properties: {step_order: 2}}
+  - {source: CL_NO_POWER_SUPPLY, type: CONTAINS_CHECK, target: CK_CHARGE_PORT, properties: {step_order: 3}}
+  - {source: CL_NO_POWER_SUPPLY, type: CONTAINS_CHECK, target: CK_SPARE_ADAPTER, properties: {step_order: 4}}
+  - {source: CL_NO_POWER_RECOVERY, type: CONTAINS_CHECK, target: CK_POWER_RESET, properties: {step_order: 1}}
+  - {source: CL_NO_POWER_RECOVERY, type: CONTAINS_CHECK, target: CK_PERIPHERALS, properties: {step_order: 2}}
+  - {source: CL_BLACK_SCREEN_TRIAGE, type: CONTAINS_CHECK, target: CK_POWER_LED, properties: {step_order: 1}}
+  - {source: CL_BLACK_SCREEN_TRIAGE, type: CONTAINS_CHECK, target: CK_SCREEN_PHYSICAL, properties: {step_order: 2}}
+  - {source: CL_BLACK_SCREEN_DISPLAY, type: CONTAINS_CHECK, target: CK_BRIGHTNESS, properties: {step_order: 1}}
+  - {source: CL_BLACK_SCREEN_DISPLAY, type: CONTAINS_CHECK, target: CK_EXTERNAL_MONITOR, properties: {step_order: 2}}
+  - {source: CL_BLACK_SCREEN_DISPLAY, type: CONTAINS_CHECK, target: CK_FLASHLIGHT, properties: {step_order: 3}}
+  - {source: CL_BLACK_SCREEN_SYSTEM, type: CONTAINS_CHECK, target: CK_CAPS_LOCK, properties: {step_order: 1}}
+  - {source: CL_BLACK_SCREEN_SYSTEM, type: CONTAINS_CHECK, target: CK_FAN_SOUND, properties: {step_order: 2}}
+  - {source: CL_BLACK_SCREEN_SYSTEM, type: CONTAINS_CHECK, target: CK_POWER_RESET, properties: {step_order: 3}}
+  - {source: CL_SCREEN_DAMAGE_CONFIRM, type: CONTAINS_CHECK, target: CK_SCREEN_PHYSICAL, properties: {step_order: 1}}
+  - {source: CL_SCREEN_DAMAGE_CONFIRM, type: CONTAINS_CHECK, target: CK_DAMAGE_CAUSE, properties: {step_order: 2}}
+  - {source: CL_SCREEN_DAMAGE_SCOPE, type: CONTAINS_CHECK, target: CK_LIQUID_SIGNS, properties: {step_order: 1}}
+  - {source: CL_SCREEN_DAMAGE_SCOPE, type: CONTAINS_CHECK, target: CK_EXTERNAL_MONITOR, properties: {step_order: 2}}
+  - {source: CL_NOT_CHARGING_TRIAGE, type: CONTAINS_CHECK, target: CK_CHARGE_ICON, properties: {step_order: 1}}
+  - {source: CL_NOT_CHARGING_TRIAGE, type: CONTAINS_CHECK, target: CK_ADAPTER_LED, properties: {step_order: 2}}
+  - {source: CL_NOT_CHARGING_POWER_PATH, type: CONTAINS_CHECK, target: CK_WALL_OUTLET, properties: {step_order: 1}}
+  - {source: CL_NOT_CHARGING_POWER_PATH, type: CONTAINS_CHECK, target: CK_ADAPTER_WATTAGE, properties: {step_order: 2}}
+  - {source: CL_NOT_CHARGING_POWER_PATH, type: CONTAINS_CHECK, target: CK_CHARGE_PORT, properties: {step_order: 3}}
+  - {source: CL_NOT_CHARGING_POWER_PATH, type: CONTAINS_CHECK, target: CK_SPARE_ADAPTER, properties: {step_order: 4}}
+  - {source: CL_NOT_CHARGING_BATTERY, type: CONTAINS_CHECK, target: CK_CHARGE_LIMIT, properties: {step_order: 1}}
+  - {source: CL_NOT_CHARGING_BATTERY, type: CONTAINS_CHECK, target: CK_POWER_RESET, properties: {step_order: 2}}
+  - {source: CL_NOT_CHARGING_BATTERY, type: CONTAINS_CHECK, target: CK_BATTERY_HEALTH, properties: {step_order: 3}}
+  - {source: CL_BATTERY_DRAIN_TRIAGE, type: CONTAINS_CHECK, target: CK_CHARGE_ICON, properties: {step_order: 1}}
+  - {source: CL_BATTERY_DRAIN_TRIAGE, type: CONTAINS_CHECK, target: CK_RUNTIME, properties: {step_order: 2}}
+  - {source: CL_BATTERY_DRAIN_USAGE, type: CONTAINS_CHECK, target: CK_BATTERY_HEALTH, properties: {step_order: 1}}
+  - {source: CL_BATTERY_DRAIN_USAGE, type: CONTAINS_CHECK, target: CK_BACKGROUND_APPS, properties: {step_order: 2}}
+  - {source: CL_BATTERY_DRAIN_USAGE, type: CONTAINS_CHECK, target: CK_POWER_MODE, properties: {step_order: 3}}
+  - {source: CL_REMOVABLE_BATTERY, type: CONTAINS_CHECK, target: CK_BATTERY_RESEAT, properties: {step_order: 1}}
+  - {source: CL_REMOVABLE_BATTERY, type: CONTAINS_CHECK, target: CK_BATTERY_CONTACTS, properties: {step_order: 2}}
+
+  # ---- ADDITION: symptom -> solution, with the condition under which it applies ----
+  - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_USE_OTHER_OUTLET, properties: {condition: "CK_WALL_OUTLET == 'works'", priority: 1}}
+  - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_POWER_RESET, properties: {condition: "CK_POWER_RESET == 'fixed'", priority: 2}}
+  - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_REMOVE_PERIPHERAL, properties: {condition: "CK_PERIPHERALS == 'starts'", priority: 3}}
+  - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_CLEAN_PORT, properties: {condition: "CK_CHARGE_PORT == 'debris'", priority: 4}}
+  - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_REPLACE_ADAPTER, properties: {condition: "CK_ADAPTER_LED == 'off' or CK_SPARE_ADAPTER == 'charges'", priority: 5}}
+  - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_REPAIR_PORT, properties: {condition: "CK_CHARGE_PORT == 'damaged'", priority: 6}}
+  - {source: S_NO_POWER, type: RESOLVED_BY, target: SOL_REPAIR_MAINBOARD, properties: {condition: "CK_POWER_RESET == 'no_change' and CK_ADAPTER_LED != 'off' and CK_PERIPHERALS == 'no_change'", priority: 7}}
+  - {source: S_BLACK_SCREEN, type: RESOLVED_BY, target: SOL_POWER_RESET, properties: {condition: "CK_POWER_RESET == 'fixed'", priority: 1}}
+  - {source: S_BLACK_SCREEN, type: RESOLVED_BY, target: SOL_REPAIR_DISPLAY, properties: {condition: "CK_EXTERNAL_MONITOR == 'external_ok' or CK_FLASHLIGHT == 'faint_image'", priority: 2}}
+  - {source: S_BLACK_SCREEN, type: RESOLVED_BY, target: SOL_GPU_DRIVER, properties: {condition: "CK_EXTERNAL_MONITOR == 'external_blank' and CK_CAPS_LOCK != 'no_response'", priority: 3}}
+  - {source: S_BLACK_SCREEN, type: RESOLVED_BY, target: SOL_REPAIR_MAINBOARD, properties: {condition: "CK_CAPS_LOCK == 'no_response' and CK_POWER_RESET == 'no_change'", priority: 4}}
+  - {source: S_SCREEN_DAMAGE, type: RESOLVED_BY, target: SOL_REPAIR_LIQUID, properties: {condition: "CK_LIQUID_SIGNS == 'present' or CK_DAMAGE_CAUSE == 'liquid'", priority: 1}}
+  - {source: S_SCREEN_DAMAGE, type: RESOLVED_BY, target: SOL_REPAIR_DISPLAY, properties: {condition: "CK_LIQUID_SIGNS == 'none'", priority: 2}}
+  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_USE_OTHER_OUTLET, properties: {condition: "CK_WALL_OUTLET == 'works'", priority: 1}}
+  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_DISABLE_CHARGE_LIMIT, properties: {condition: "CK_CHARGE_LIMIT == 'enabled'", priority: 2}}
+  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_CLEAN_PORT, properties: {condition: "CK_CHARGE_PORT == 'debris'", priority: 3}}
+  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_REPLACE_ADAPTER, properties: {condition: "CK_SPARE_ADAPTER == 'charges' or CK_ADAPTER_LED == 'off' or CK_ADAPTER_WATTAGE == 'lower'", priority: 4}}
+  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_POWER_RESET, properties: {condition: "CK_POWER_RESET == 'fixed'", priority: 5}}
+  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_REPAIR_PORT, properties: {condition: "CK_CHARGE_PORT == 'damaged'", priority: 6}}
+  - {source: S_NOT_CHARGING, type: RESOLVED_BY, target: SOL_REPLACE_BATTERY, properties: {condition: "CK_SPARE_ADAPTER == 'still_not' and CK_BATTERY_HEALTH == 'degraded'", priority: 7}}
+  - {source: S_BATTERY_DRAIN, type: RESOLVED_BY, target: SOL_REPLACE_BATTERY, properties: {condition: "CK_BATTERY_HEALTH == 'degraded'", priority: 1}}
+  - {source: S_BATTERY_DRAIN, type: RESOLVED_BY, target: SOL_POWER_SETTINGS, properties: {condition: "CK_BATTERY_HEALTH == 'healthy' and (CK_BACKGROUND_APPS == 'heavy_app' or CK_POWER_MODE == 'performance')", priority: 2}}
+  - {source: S_BATTERY_DRAIN, type: RESOLVED_BY, target: SOL_CLEAN_BATTERY_CONTACTS, properties: {condition: "CK_BATTERY_CONTACTS == 'dirty'", priority: 3}}
+
+  # ---- case 1 ----
+  - {source: CASE_001, type: INVOLVES_DEVICE, target: DEV_PRO16}
+  - {source: CASE_001, type: HAS_ASSESSMENT, target: AS_001_1}
+  - {source: CASE_001, type: HAS_ASSESSMENT, target: AS_001_2}
+  - {source: CASE_001, type: HAS_ASSESSMENT, target: AS_001_3}
+  - {source: CASE_001, type: HAS_CHECK_RESULT, target: CR_001_1}
+  - {source: CASE_001, type: HAS_CHECK_RESULT, target: CR_001_2}
+  - {source: CASE_001, type: HAS_CHECK_RESULT, target: CR_001_3}
+  - {source: CR_001_1, type: RESULT_OF, target: CK_POWER_LED}
+  - {source: CR_001_2, type: RESULT_OF, target: CK_SCREEN_PHYSICAL}
+  - {source: CR_001_3, type: RESULT_OF, target: CK_EXTERNAL_MONITOR}
+  - {source: AS_001_1, type: ASSESSES, target: S_NO_POWER, properties: {verdict: candidate, reason: "'The screen is dead' is a vague expression of this symptom"}}
+  - {source: AS_001_1, type: ASSESSES, target: S_BLACK_SCREEN, properties: {verdict: candidate, reason: "'The screen is dead' is a vague expression of this symptom"}}
+  - {source: AS_001_1, type: ASSESSES, target: S_SCREEN_DAMAGE, properties: {verdict: candidate, reason: "'The screen is dead' is a vague expression of this symptom"}}
+  - {source: AS_001_2, type: SUPERSEDES, target: AS_001_1}
+  - {source: AS_001_2, type: BASED_ON, target: CR_001_1}
+  - {source: AS_001_2, type: BASED_ON, target: CR_001_2}
+  - {source: AS_001_2, type: ASSESSES, target: S_NO_POWER, properties: {verdict: ruled_out, reason: The power indicator light is on}}
+  - {source: AS_001_2, type: ASSESSES, target: S_SCREEN_DAMAGE, properties: {verdict: ruled_out, reason: The screen surface is undamaged}}
+  - {source: AS_001_2, type: ASSESSES, target: S_BLACK_SCREEN, properties: {verdict: supported, reason: Both distinguishing conditions are met}}
+  - {source: AS_001_3, type: SUPERSEDES, target: AS_001_2}
+  - {source: AS_001_3, type: BASED_ON, target: CR_001_1}
+  - {source: AS_001_3, type: BASED_ON, target: CR_001_2}
+  - {source: AS_001_3, type: BASED_ON, target: CR_001_3}
+  - {source: AS_001_3, type: ASSESSES, target: S_BLACK_SCREEN, properties: {verdict: confirmed, reason: "All distinguishing conditions are met; a working external screen points to the built-in display"}}
+  - {source: CASE_001, type: SELECTED_SOLUTION, target: SOL_REPAIR_DISPLAY, properties: {outcome: resolved}}
+
+  # ---- case 2 ----
+  - {source: CASE_002, type: INVOLVES_DEVICE, target: DEV_AIR13}
+  - {source: CASE_002, type: HAS_ASSESSMENT, target: AS_002_1}
+  - {source: CASE_002, type: HAS_ASSESSMENT, target: AS_002_2}
+  - {source: CASE_002, type: HAS_CHECK_RESULT, target: CR_002_1}
+  - {source: CASE_002, type: HAS_CHECK_RESULT, target: CR_002_2}
+  - {source: CASE_002, type: HAS_CHECK_RESULT, target: CR_002_3}
+  - {source: CR_002_1, type: RESULT_OF, target: CK_CHARGE_ICON}
+  - {source: CR_002_2, type: RESULT_OF, target: CK_ADAPTER_LED}
+  - {source: CR_002_3, type: RESULT_OF, target: CK_SPARE_ADAPTER}
+  - {source: AS_002_1, type: ASSESSES, target: S_NOT_CHARGING, properties: {verdict: supported, reason: The description matches a typical expression}}
+  - {source: AS_002_2, type: SUPERSEDES, target: AS_002_1}
+  - {source: AS_002_2, type: BASED_ON, target: CR_002_1}
+  - {source: AS_002_2, type: ASSESSES, target: S_NOT_CHARGING, properties: {verdict: confirmed, reason: "Charging status is plugged in, not charging"}}
+  - {source: CASE_002, type: SELECTED_SOLUTION, target: SOL_REPLACE_ADAPTER, properties: {outcome: resolved}}
+
+  # ---- case 3 ----
+  - {source: CASE_003, type: INVOLVES_DEVICE, target: DEV_WORK15}
+  - {source: CASE_003, type: HAS_ASSESSMENT, target: AS_003_1}
+  - {source: CASE_003, type: HAS_ASSESSMENT, target: AS_003_2}
+  - {source: CASE_003, type: HAS_CHECK_RESULT, target: CR_003_1}
+  - {source: CASE_003, type: HAS_CHECK_RESULT, target: CR_003_2}
+  - {source: CASE_003, type: HAS_CHECK_RESULT, target: CR_003_3}
+  - {source: CR_003_1, type: RESULT_OF, target: CK_CHARGE_ICON}
+  - {source: CR_003_2, type: RESULT_OF, target: CK_RUNTIME}
+  - {source: CR_003_3, type: RESULT_OF, target: CK_BATTERY_HEALTH}
+  - {source: AS_003_1, type: ASSESSES, target: S_NOT_CHARGING, properties: {verdict: supported, reason: "'Keeps running out of power' leans slightly towards not charging"}}
+  - {source: AS_003_1, type: ASSESSES, target: S_BATTERY_DRAIN, properties: {verdict: candidate, reason: "'A problem with my battery' is also a vague expression of this symptom"}}
+  - {source: AS_003_2, type: SUPERSEDES, target: AS_003_1}
+  - {source: AS_003_2, type: BASED_ON, target: CR_003_1}
+  - {source: AS_003_2, type: BASED_ON, target: CR_003_2}
+  - {source: AS_003_2, type: ASSESSES, target: S_NOT_CHARGING, properties: {verdict: ruled_out, reason: It charges normally to 100%}}
+  - {source: AS_003_2, type: ASSESSES, target: S_BATTERY_DRAIN, properties: {verdict: confirmed, reason: All distinguishing conditions are met}}
+  - {source: CASE_003, type: SELECTED_SOLUTION, target: SOL_REPLACE_BATTERY, properties: {outcome: resolved}}

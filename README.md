@@ -41,7 +41,7 @@ python3 -m venv .venv
 Open **http://localhost:8600**. API documentation is at http://localhost:8600/docs.
 
 ```bash
-.venv/bin/python -m pytest -q                                   # 74 tests, about 4 seconds
+.venv/bin/python -m pytest -q                                   # 88 tests, about 7 seconds
 .venv/bin/python -m ontolab.cli coverage                        # tool coverage, no model needed
 .venv/bin/python -m ontolab.cli ask "What should the agent do after a power reset fails?" --config B
 .venv/bin/python -m ontolab.cli evaluate --split test --repeats 3
@@ -79,6 +79,7 @@ ontolab/api        FastAPI service
   ├─ llm/          the OpenAI client and the mock policy used by tests
   ├─ tools/        tool registry + domain, generic, semantic and retrieval tools     ← Layer 4
   ├─ graphrag/     flattened profiles, hybrid retrieval, terminology mappings
+  ├─ troubleshooting/  case engine, tools and agent for the diagram-based ontology
   ├─ ontology/     definition format, ingestion, SQL graph store, rule evaluation    ← Layer 3
   ├─ semantic/     governed semantic view compiled to SQL                            ← Layer 2
   └─ sample/       the laptop-support ontology and synthetic operational data        ← Layer 1
@@ -198,6 +199,45 @@ hash of the graph; when the ontology changes they are reported **stale** until r
 ontology, in three kinds: authoritative, ambiguous (ask the user), and collection (a business
 grouping).
 
+## Troubleshooting on the diagram-based ontology
+
+A second, smaller ontology (`data/ontology/troubleshooting_ideal.yaml`) models troubleshooting as a
+case record, and an agent works live cases on it in the **Troubleshooting** section.
+
+```
+SupportCase ─ INVOLVES_DEVICE ─▶ Device
+SupportCase ─ HAS_ASSESSMENT ─▶ SymptomAssessment ─ ASSESSES ─▶ Symptom ─ HAS_CHECKLIST ─▶ Checklist
+                                 SymptomAssessment ─ BASED_ON ─▶ CheckResult        Checklist ─ CONTAINS_CHECK ─▶ CheckDefinition
+                                 SymptomAssessment ─ SUPERSEDES ─▶ earlier one
+SupportCase ─ HAS_CHECK_RESULT ─▶ CheckResult ─ RESULT_OF ─▶ CheckDefinition
+SupportCase ─ SELECTED_SOLUTION ─▶ Solution            Symptom ─ RESOLVED_BY ─▶ Solution   (addition to the diagram)
+```
+
+- **Knowledge layer**: 5 symptoms (each with typical expressions, vague expressions and machine-checkable
+  distinguishing conditions), 24 check definitions listing every possible result, 14 checklists,
+  14 solutions with applicability conditions, 3 devices.
+- **Each symptom has two or three checklists**, linked with a `role` and an `order`: *triage* confirms
+  the symptom, *locate_cause* finds what is wrong, and *deeper* holds further or device-specific
+  checks. A link can carry `applies_when` (for example `removable_battery == true`), and that
+  checklist is skipped for devices it does not fit. Checks are shared between checklists.
+- **Case layer**: every conversation writes a `SupportCase`, its `CheckResult`s and a chain of
+  `SymptomAssessment`s into the graph. Three worked example cases ship with the file.
+- **The agent** (`ontolab/troubleshooting/`) has 10 tools: `match_symptoms`, `list_symptoms`,
+  `describe_symptom`, `get_case`, `suggest_next_check`, `record_check_result`, `record_assessment`,
+  `get_applicable_solutions`, `select_solution`, `escalate_case`.
+- **Three decisions are made by code, not by the model**: a check result must use a result code its
+  definition lists; a symptom can be marked confirmed only when all of its distinguishing conditions
+  are met by recorded results; a solution can be selected only when its condition holds.
+- `suggest_next_check` picks the check that rules out the most remaining candidates; once a symptom
+  is confirmed it walks that symptom's checklists in order, offering the next check a solution depends on.
+- Writes go through the generic graph store and are rejected unless they satisfy the ontology schema.
+- The workspace has its own database (`runs/troubleshooting.duckdb`). It reloads automatically when
+  the ontology file changes, and "Reset to the three examples" reloads on demand; both remove cases
+  opened in the lab.
+
+Not built yet: a scripted multi-turn benchmark for this agent, and the comparison against a fixed
+script and a documents-only model.
+
 ## Evaluation
 
 `data/benchmark/questions.yaml`: 46 questions (32 test, 14 dev) across 12 categories and 4
@@ -244,16 +284,21 @@ the dashboard makes every trace inspectable.
 
 ## The web interface
 
-Five sections, plus experiment controls in the sidebar that apply everywhere.
+Six sections, plus experiment controls in a collapsible sidebar. The sidebar controls apply to the benchmark
+sections; the Explorer can show either ontology.
 
-- **Ontology Explorer**: interactive graph (filter by object and relationship type, focus on a
-  node and its neighbourhood), node properties, hierarchy, relationship details with source and
-  version, the schema, the semantic view, the terminology mappings, and each node's flattened profile.
+- **Ontology Explorer**: either ontology at three levels. *Model*: a box-and-arrow diagram of object
+  types and relationships. *Instances*: an interactive graph of individual objects with properties,
+  hierarchy and relationship details. *Tables*: the raw stored rows of every table, with paging,
+  text filter and full-row view. Also the schema, semantic view, terminology mappings and profiles.
 - **Tool Registry**: tools by configuration, descriptions, schemas, capabilities, enable/disable,
   edit a description, run a tool by hand.
 - **Agent Playground**: ask a question of several configurations side by side, then follow up with
   each one (each remembers its own conversation); final answer, tool trace with arguments and
   results, generated SQL, traversed subgraph, metrics, and what is currently in memory.
+- **Troubleshooting**: play the customer; the agent works the case on the diagram-based ontology while
+  the case record (candidates, check results, assessment history, solution, evidence graph) fills in
+  beside the conversation. Stored cases, including the three examples, can be opened and read.
 - **Coverage Explorer**: what each configuration can reach, direct versus multi-call, per task
   with reasons; disable a tool and coverage updates at once.
 - **Evaluation Dashboard**: run the benchmark, then coverage versus tool-calling accuracy, success
@@ -307,6 +352,7 @@ ontolab/            the Python package (see Architecture)
 web/                the JavaScript interface
 data/
   ontology/laptop_support.yaml     sample ontology (generated; synthetic)
+  ontology/troubleshooting_ideal.yaml   diagram-based troubleshooting ontology with example cases
   semantic_view.yaml               semantic layer definition
   terminology_mappings.yaml        curated mappings for agent E
   benchmark/questions.yaml         46 benchmark tasks with expected results

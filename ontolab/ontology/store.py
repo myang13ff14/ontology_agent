@@ -13,7 +13,9 @@ import hashlib
 from typing import Any
 
 from ..config import Limits
-from ..db import Database, loads
+import uuid
+
+from ..db import Database, dumps, loads
 from ..errors import ToolError
 from ..text import contains_phrase, normalize, overlap
 
@@ -113,8 +115,8 @@ class OntologyStore:
                 "source_types": loads(row["source_types"], []), "target_types": loads(row["target_types"], []),
                 "hierarchical": row["hierarchical"], "storage": row["storage"], "table": row["table_name"],
                 "source_column": row["source_column"], "target_column": row["target_column"],
-                "properties": [{"name": p["name"], "type": p["data_type"], "description": p["description"]}
-                               for p in props if p["owner_name"] == row["name"]],
+                "properties": [{"name": p["name"], "type": p["data_type"], "required": p["required"],
+                                "description": p["description"]} for p in props if p["owner_name"] == row["name"]],
                 "edge_count": counts.get(row["name"], 0) if row["storage"] == "graph" else None,
                 "disabled": row["name"] in disabled,
             }
@@ -433,6 +435,66 @@ class OntologyStore:
                                "relationship_types": sorted({e["relationship_type"] for e in chain}),
                                "paths": [{"node_ids": node_ids, "edge_ids": [e["edge_id"] for e in chain],
                                           "relationship_types": [e["relationship_type"] for e in chain]}]}}
+
+    # ---------------------------------------------------------------- writes
+
+    def _check_properties(self, where: str, values: dict, defs: list[dict]) -> None:
+        """Instance data must satisfy the schema: declared properties, right types, required present."""
+        types = {"string": (str,), "number": (int, float), "boolean": (bool,), "list": (list,), "object": (dict,)}
+        known = {d["name"]: d for d in defs}
+        problems = [f"missing required property '{d['name']}'" for d in defs if d.get("required") and values.get(d["name"]) is None]
+        for name, value in values.items():
+            if name not in known:
+                problems.append(f"property '{name}' is not defined in the schema")
+            elif value is not None and (not isinstance(value, types[known[name]["type"]])
+                                        or (known[name]["type"] == "number" and isinstance(value, bool))):
+                problems.append(f"property '{name}' should be {known[name]['type']}")
+        if problems:
+            raise OntologyAccessError("schema_violation", f"{where}: " + "; ".join(problems), valid=sorted(known))
+
+    def add_node(self, node_id: str, node_type: str, name: str, definition: str = "", synonyms: list[str] | None = None,
+                 properties: dict | None = None, source: str = "runtime") -> dict:
+        """Append an instance. Rejected unless it conforms to the ontology schema."""
+        type_info = self._require_type(node_type)
+        if type_info["storage"] != "graph":
+            raise OntologyAccessError("not_a_graph_type", f"'{node_type}' instances live in operational tables.")
+        if self.db.scalar("SELECT COUNT(*) FROM kg_node WHERE node_id = ?", [node_id]):
+            raise OntologyAccessError("duplicate_object", f"An object with id '{node_id}' already exists.")
+        properties = properties or {}
+        self._check_properties(f"{node_type} {node_id}", properties, type_info["properties"])
+        self.db.insert_many("kg_node", [{
+            "node_id": node_id, "node_type": node_type, "canonical_name": name, "definition": definition,
+            "synonyms": dumps(synonyms or []), "properties": dumps(properties), "source": source,
+            "ontology_version": self.meta()["version"]}])
+        return self.get_object(node_id)
+
+    def add_edge(self, source_id: str, relationship_type: str, target_id: str, properties: dict | None = None,
+                 confidence: float = 1.0, source: str = "runtime") -> str:
+        """Append a relationship. Rejected unless the schema allows it between these two object types."""
+        rels = self.relationship_types()
+        if relationship_type not in rels:
+            raise OntologyAccessError("unknown_relationship_type", f"Unknown relationship type '{relationship_type}'.", valid=sorted(rels))
+        rel = rels[relationship_type]
+        start, end = self.get_object(source_id), self.get_object(target_id)
+        if start["node_type"] not in rel["source_types"] or end["node_type"] not in rel["target_types"]:
+            raise OntologyAccessError(
+                "schema_violation", f"{relationship_type} cannot link {start['node_type']} to {end['node_type']}.",
+                allowed_sources=rel["source_types"], allowed_targets=rel["target_types"])
+        properties = properties or {}
+        self._check_properties(f"{relationship_type} edge", properties, rel["properties"])
+        edge_id = f"R{uuid.uuid4().hex[:10]}"
+        self.db.insert_many("kg_edge", [{
+            "edge_id": edge_id, "source_node_id": source_id, "target_node_id": target_id,
+            "relationship_type": relationship_type, "properties": dumps(properties), "source": source,
+            "confidence": confidence, "ontology_version": self.meta()["version"]}])
+        return edge_id
+
+    def update_properties(self, node_id: str, changes: dict) -> dict:
+        node = self.get_object(node_id)
+        merged = {**node["properties"], **changes}
+        self._check_properties(f"{node['node_type']} {node_id}", merged, self._require_type(node["node_type"])["properties"])
+        self.db.execute("UPDATE kg_node SET properties = ? WHERE node_id = ?", [dumps(merged), node_id])
+        return self.get_object(node_id)
 
     # --------------------------------------------------------------- helpers
 
