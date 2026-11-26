@@ -1,0 +1,150 @@
+# Governed semantic layer over the operational tables.
+# The agent never sees raw schemas: it asks for metrics and dimensions by name and
+# the layer compiles validated, read-only SQL. Expressions here are trusted config.
+name: support_operations
+description: Support operations metrics for service cases, diagnostic executions and work orders (synthetic data).
+
+logical_tables:
+  cases:
+    description: One row per service case.
+    grain: service case
+    base: service_case c
+    joins:
+      - LEFT JOIN kg_node s ON s.node_id = c.symptom_id
+      - LEFT JOIN kg_node d ON d.node_id = c.call_driver_id
+      - LEFT JOIN kg_node m ON m.node_id = c.device_model_id
+    relationships:
+      - cases.symptom_id -> Symptom (ontology node id)
+      - cases.call_driver_id -> CallDriver (ontology node id)
+      - cases.device_model_id -> DeviceModel (ontology node id)
+    dimensions:
+      case_id: {expr: c.case_id, description: Service case identifier.}
+      symptom_id: {expr: c.symptom_id, description: "Ontology id of the reported symptom (specific symptoms only, e.g. S_NOT_CHARGING)."}
+      symptom_name: {expr: s.canonical_name, description: Canonical name of the reported symptom.}
+      call_driver_id: {expr: c.call_driver_id, description: "Ontology id of the call driver (e.g. CD_POWER)."}
+      call_driver_name: {expr: d.canonical_name, description: Name of the call driver.}
+      device_model_id: {expr: c.device_model_id, description: "Ontology id of the device model (e.g. DM_AIR13)."}
+      device_model_name: {expr: m.canonical_name, description: Name of the device model.}
+      channel: {expr: c.channel, description: "Contact channel: phone, chat or email."}
+      resolution_type: {expr: c.resolution_type, description: "How the case ended: fixed_on_phone, work_order or escalated."}
+      in_warranty: {expr: c.in_warranty, description: Whether the device was under warranty.}
+      opened_month: {expr: "strftime(c.opened_at, '%Y-%m')", description: Month the case was opened (YYYY-MM).}
+    facts:
+      handle_time_minutes: {expr: c.handle_time_minutes, description: Minutes spent handling the case.}
+      is_fixed_on_phone: {expr: "CASE WHEN c.resolution_type = 'fixed_on_phone' THEN 1 ELSE 0 END", description: 1 when resolved during the contact without a work order or escalation.}
+      is_escalated: {expr: "CASE WHEN c.escalated THEN 1 ELSE 0 END", description: 1 when the case was escalated.}
+      has_work_order: {expr: "CASE WHEN EXISTS (SELECT 1 FROM work_order w WHERE w.case_id = c.case_id) THEN 1 ELSE 0 END", description: 1 when the case produced at least one work order.}
+
+  executions:
+    description: One row per diagnostic action performed during a case.
+    grain: diagnostic execution
+    base: diagnostic_execution x
+    joins:
+      - JOIN service_case c ON c.case_id = x.case_id
+      - LEFT JOIN kg_node a ON a.node_id = x.action_id
+      - LEFT JOIN kg_node o ON o.node_id = x.outcome_id
+      - LEFT JOIN kg_node s ON s.node_id = c.symptom_id
+      - LEFT JOIN kg_node d ON d.node_id = c.call_driver_id
+    relationships:
+      - executions.case_id -> cases.case_id (many to one)
+      - executions.action_id -> DiagnosticAction (ontology node id)
+      - executions.outcome_id -> ActionOutcome (ontology node id)
+    dimensions:
+      action_id: {expr: x.action_id, description: "Ontology id of the diagnostic action (e.g. A_POWER_RESET)."}
+      action_name: {expr: a.canonical_name, description: Name of the diagnostic action.}
+      outcome_id: {expr: x.outcome_id, description: Ontology id of the recorded outcome.}
+      outcome_name: {expr: o.canonical_name, description: Name of the recorded outcome.}
+      step_number: {expr: x.step_number, description: Position of the action within the case.}
+      symptom_id: {expr: c.symptom_id, description: Ontology id of the case's symptom.}
+      symptom_name: {expr: s.canonical_name, description: Name of the case's symptom.}
+      call_driver_id: {expr: c.call_driver_id, description: Ontology id of the case's call driver.}
+      call_driver_name: {expr: d.canonical_name, description: Name of the case's call driver.}
+      device_model_id: {expr: c.device_model_id, description: Ontology id of the device model.}
+      channel: {expr: c.channel, description: Contact channel.}
+    facts:
+      succeeded: {expr: "CASE WHEN x.succeeded THEN 1 ELSE 0 END", description: 1 when the action resolved the problem.}
+      duration_minutes: {expr: x.duration_minutes, description: Minutes spent on the action.}
+
+  work_orders:
+    description: One row per work order.
+    grain: work order
+    base: work_order w
+    joins:
+      - JOIN service_case c ON c.case_id = w.case_id
+      - LEFT JOIN kg_node k ON k.node_id = w.component_id
+      - LEFT JOIN kg_node s ON s.node_id = c.symptom_id
+      - LEFT JOIN kg_node d ON d.node_id = c.call_driver_id
+    relationships:
+      - work_orders.case_id -> cases.case_id (many to one)
+      - work_orders.component_id -> Component (ontology node id)
+    dimensions:
+      work_order_type: {expr: w.work_order_type, description: "depot_repair or part_shipment."}
+      work_order_status: {expr: w.status, description: "completed, in_progress or cancelled."}
+      component_id: {expr: w.component_id, description: Ontology id of the component being replaced.}
+      component_name: {expr: k.canonical_name, description: Name of the component being replaced.}
+      symptom_id: {expr: c.symptom_id, description: Ontology id of the case's symptom.}
+      symptom_name: {expr: s.canonical_name, description: Name of the case's symptom.}
+      call_driver_id: {expr: c.call_driver_id, description: Ontology id of the case's call driver.}
+      call_driver_name: {expr: d.canonical_name, description: Name of the case's call driver.}
+      device_model_id: {expr: c.device_model_id, description: Ontology id of the device model.}
+    facts:
+      cost_usd: {expr: w.cost_usd, description: Cost of the work order in US dollars.}
+
+metrics:
+  case_count:
+    table: cases
+    expr: COUNT(*)
+    format: integer
+    definition: Number of service cases.
+  average_handle_time:
+    table: cases
+    expr: AVG(handle_time_minutes)
+    format: minutes
+    definition: Mean minutes spent handling a case.
+    numerator: Sum of handle_time_minutes over the selected cases.
+    denominator: Number of selected cases.
+  fix_on_phone_rate:
+    table: cases
+    expr: SUM(is_fixed_on_phone) * 1.0 / NULLIF(COUNT(*), 0)
+    format: ratio
+    definition: Share of cases resolved during the contact, with no work order and no escalation.
+    numerator: Cases whose resolution_type is fixed_on_phone.
+    denominator: All selected cases.
+  escalation_rate:
+    table: cases
+    expr: SUM(is_escalated) * 1.0 / NULLIF(COUNT(*), 0)
+    format: ratio
+    definition: Share of cases that were escalated.
+    numerator: Cases flagged escalated.
+    denominator: All selected cases.
+  work_order_generation_rate:
+    table: cases
+    expr: SUM(has_work_order) * 1.0 / NULLIF(COUNT(*), 0)
+    format: ratio
+    definition: Share of cases that produced at least one work order.
+    numerator: Cases with one or more work orders.
+    denominator: All selected cases.
+  action_execution_count:
+    table: executions
+    expr: COUNT(*)
+    format: integer
+    definition: Number of times diagnostic actions were performed.
+  diagnostic_action_success_rate:
+    table: executions
+    expr: SUM(succeeded) * 1.0 / NULLIF(COUNT(*), 0)
+    format: ratio
+    definition: Share of diagnostic action executions that resolved the problem.
+    numerator: Executions whose outcome resolved the problem.
+    denominator: All selected executions.
+  work_order_count:
+    table: work_orders
+    expr: COUNT(*)
+    format: integer
+    definition: Number of work orders.
+  average_work_order_cost:
+    table: work_orders
+    expr: AVG(cost_usd)
+    format: usd
+    definition: Mean cost of a work order in US dollars.
+    numerator: Sum of cost_usd over the selected work orders.
+    denominator: Number of selected work orders.

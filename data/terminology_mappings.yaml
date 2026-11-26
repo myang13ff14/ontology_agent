@@ -1,0 +1,48 @@
+# Curated terminology mappings for the laptop-support sample (SYNTHETIC).
+# Kept outside the ontology and versioned separately: these are business
+# conventions that the graph cannot derive on its own.
+version: "2026.1"
+description: Phrases that customers and analysts use which are not ontology names or synonyms.
+mappings:
+  - term: won't take a charge
+    variants: [not taking a charge, does not take a charge, won't juice up]
+    kind: authoritative
+    targets: [S_NOT_CHARGING]
+    note: Colloquial wording for a charging failure.
+  - term: screen is dead
+    variants: [dead screen, screen died]
+    kind: ambiguous
+    targets: [S_BLACK_SCREEN, S_DISPLAY_FAILURE]
+    clarification: Does the laptop still power on (lights, fan or sound) with nothing on the screen, or is the screen itself cracked or physically damaged?
+  - term: laptop is dead
+    variants: [dead laptop, completely dead]
+    kind: ambiguous
+    targets: [S_NO_POWER, S_BLACK_SCREEN]
+    clarification: When you press the power button, do any lights or fan sounds come on?
+  - term: bricked
+    variants: [it is a brick]
+    kind: authoritative
+    targets: [S_NO_POWER]
+  - term: power-related problems
+    variants: [power-related issues, power related problems, power-related symptoms]
+    kind: collection
+    targets: [S_NOT_CHARGING, S_CHARGING_INTERMITTENT, S_PLUGGED_NOT_CHARGING, S_NO_POWER, S_UNEXPECTED_SHUTDOWN]
+    note: By reporting convention this excludes the battery symptoms, which are tracked separately.
+  - term: display-related issues
+    variants: [display-related problems, display related issues, screen-related issues]
+    kind: collection
+    targets: [S_BLACK_SCREEN, S_DISPLAY_FAILURE, S_DISPLAY_FLICKER, S_DISPLAY_LINES]
+  - term: battery-related call drivers
+    variants: [battery related call drivers, battery-related drivers]
+    kind: collection
+    targets: [CD_BATTERY, CD_POWER]
+    note: Every call driver whose symptoms can indicate the Battery component.
+  - term: can't get online
+    variants: [cannot get online, no internet]
+    kind: ambiguous
+    targets: [S_WIFI_NOT_DETECTED, S_WIFI_DROPS]
+    clarification: Can the laptop see any Wi-Fi networks at all, or does it connect and then drop?
+  - term: ghost typing
+    variants: [types by itself, phantom keys]
+    kind: authoritative
+    targets: [S_KEYS_STUCK]

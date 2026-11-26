@@ -1,0 +1,581 @@
+# Benchmark for the ontology-grounded agent configurations (SYNTHETIC domain data).
+#
+# split: dev  - used while tuning prompts and tool descriptions
+#        test - held out; report final numbers on this split only
+#
+# Each task states what answering it REQUIRES (object types, relationships, operations,
+# data) so tool coverage can be judged without running a model, and lists every tool
+# sequence known to work. Expected results are ids, phrases or live reference queries;
+# numeric expectations are computed from the database at evaluation time.
+#
+# Operations that no tool provides (ontology_write, send_email) mark tasks that are
+# unsupported by design: the correct behaviour is to say so.
+
+sequence_library:
+  SV: [query_semantic_view]
+  SV_DRIVER: [query_semantic_view, get_driver_performance]
+  B_SYM: [resolve_symptom]
+  B_HIER: [resolve_symptom, get_symptom_hierarchy]
+  B_CHECKLIST: [resolve_symptom, get_diagnostic_checklist]
+  B_STEPS: [resolve_symptom, get_diagnostic_checklist, get_diagnostic_actions]
+  B_STEPS_KNOWLEDGE: [resolve_symptom, get_diagnostic_checklist, get_diagnostic_actions, get_related_knowledge]
+  B_STEPS_RULES: [resolve_symptom, get_diagnostic_checklist, get_diagnostic_actions, get_action_constraints]
+  B_STEPS_NEXT: [resolve_symptom, get_diagnostic_checklist, get_diagnostic_actions, get_next_action]
+  B_STEPS_NEXT_RULES: [resolve_symptom, get_diagnostic_checklist, get_diagnostic_actions, get_next_action, get_action_constraints]
+  B_HIER_SV: [resolve_symptom, get_symptom_hierarchy, query_semantic_view]
+  B_SV_KNOWLEDGE: [query_semantic_view, get_related_knowledge]
+  B_SV_RULES: [query_semantic_view, get_action_constraints]
+  B_SV_NEXT: [query_semantic_view, get_next_action]
+  C_SEARCH: [search_objects]
+  C_SEARCH_OBJECT: [search_objects, get_object]
+  C_SEARCH_NEIGHBORS: [search_objects, get_neighbors]
+  C_SEARCH_NEIGHBORS2: [search_objects, get_neighbors, get_neighbors]
+  C_SEARCH_NEIGHBORS3: [search_objects, get_neighbors, get_neighbors, get_neighbors]
+  C_SEARCH_TRAVERSE: [search_objects, traverse_graph]
+  C_SEARCH_TRAVERSE_NEIGHBORS: [search_objects, traverse_graph, get_neighbors]
+  C_SEARCH_PATH: [search_objects, find_path]
+  C_QUERY: [query_objects]
+  C_QUERY_NEIGHBORS: [query_objects, get_neighbors]
+  C_SCHEMA: [get_schema]
+  C_RELTYPES: [get_relationship_types]
+  C_SEARCH_TRAVERSE_SV: [search_objects, traverse_graph, query_semantic_view]
+  C_SEARCH_NEIGHBORS_SV: [search_objects, get_neighbors, query_semantic_view]
+  C_SEARCH_NEIGHBORS2_SV: [search_objects, get_neighbors, get_neighbors, query_semantic_view]
+  C_SEARCH_NEIGHBORS_RULE: [search_objects, get_neighbors, evaluate_rule]
+  C_SEARCH_NEIGHBORS2_RULE: [search_objects, get_neighbors, get_neighbors, evaluate_rule]
+  D_PROFILE: [search_ontology_profiles]
+  D_PROFILE_SV: [search_ontology_profiles, query_semantic_view]
+
+tasks:
+  # ------------------------------------------------------- single-object retrieval
+  - id: Q01
+    split: test
+    category: single_object
+    complexity: 1
+    question: What is the 'Swollen Battery' symptom, and what is its severity?
+    required: {objects: [Symptom], operations: [resolve_term, object_details], data: [severity]}
+    acceptable_sequences: [C_SEARCH_OBJECT, C_QUERY, D_PROFILE]
+    expected:
+      answer_ids: [S_BATTERY_SWOLLEN]
+      answer_text: [[safety]]
+  - id: Q02
+    split: dev
+    category: single_object
+    complexity: 1
+    question: How long does the 'Update BIOS and Firmware' action typically take, and how risky is it?
+    required: {objects: [DiagnosticAction], operations: [resolve_term, object_details], data: [estimated_minutes, risk]}
+    acceptable_sequences: [C_SEARCH_OBJECT, C_QUERY, D_PROFILE]
+    expected:
+      answer_ids: [A_BIOS_UPDATE]
+      answer_text: [["15"], [medium]]
+  - id: Q03
+    split: test
+    category: single_object
+    complexity: 1
+    question: What is the charger wattage of the AeroBook Pro 16 (2024)?
+    required: {objects: [DeviceModel], operations: [resolve_term, object_details], data: [charger_wattage]}
+    acceptable_sequences: [C_SEARCH_OBJECT, C_QUERY, D_PROFILE]
+    expected:
+      answer_text: [["140"]]
+      evidence_ids: [DM_PRO16]
+
+  # ------------------------------------------------------------ synonym resolution
+  - id: Q04
+    split: test
+    category: synonym_resolution
+    complexity: 1
+    question: A customer says their laptop has a 'bulging battery'. Which symptom is that, and which checklist applies?
+    required: {objects: [Symptom, DiagnosticChecklist], relationships: [HAS_CHECKLIST], operations: [resolve_term, neighbor_lookup]}
+    acceptable_sequences: [B_CHECKLIST, C_SEARCH_NEIGHBORS, D_PROFILE]
+    argument_checks: {get_diagnostic_checklist: [S_BATTERY_SWOLLEN]}
+    expected:
+      answer_ids: [S_BATTERY_SWOLLEN, CL_SWOLLEN_BATTERY]
+      evidence_edges: [[S_BATTERY_SWOLLEN, HAS_CHECKLIST, CL_SWOLLEN_BATTERY]]
+  - id: Q05
+    split: dev
+    category: synonym_resolution
+    complexity: 1
+    question: What does the ontology call a 'hard reset'?
+    required: {objects: [DiagnosticAction], operations: [resolve_term]}
+    acceptable_sequences: [C_SEARCH, D_PROFILE]
+    expected:
+      answer_ids: [A_POWER_RESET]
+  - id: Q06
+    split: test
+    category: synonym_resolution
+    complexity: 2
+    question: Customers report the 'trackpad not working'. Which components can cause this?
+    required: {objects: [Symptom, Component], relationships: [INDICATES], operations: [resolve_term, neighbor_lookup]}
+    acceptable_sequences: [C_SEARCH_NEIGHBORS, D_PROFILE]
+    expected:
+      answer_ids: [C_TOUCHPAD, C_OS_SOFTWARE]
+      evidence_edges: [[S_TOUCHPAD, INDICATES, C_TOUCHPAD], [S_TOUCHPAD, INDICATES, C_OS_SOFTWARE]]
+
+  # --------------------------------------------------- hierarchical concept expansion
+  - id: Q07
+    split: test
+    category: hierarchy
+    complexity: 2
+    question: List every specific symptom that falls under 'Battery Issue'.
+    required: {objects: [Symptom], relationships: [SUBTYPE_OF], operations: [resolve_term, hierarchy_expansion]}
+    acceptable_sequences: [B_HIER, C_SEARCH_TRAVERSE, C_SEARCH_NEIGHBORS, D_PROFILE]
+    argument_checks: {get_symptom_hierarchy: [S_BATTERY]}
+    expected:
+      answer_ids: [S_BATTERY_DRAIN, S_BATTERY_SWOLLEN, S_BATTERY_NOT_DETECTED]
+      evidence_edges: [[S_BATTERY_DRAIN, SUBTYPE_OF, S_BATTERY], [S_BATTERY_SWOLLEN, SUBTYPE_OF, S_BATTERY], [S_BATTERY_NOT_DETECTED, SUBTYPE_OF, S_BATTERY]]
+  - id: Q08
+    split: dev
+    category: hierarchy
+    complexity: 2
+    question: Which broader symptom categories does 'Charges Intermittently' belong to?
+    required: {objects: [Symptom], relationships: [SUBTYPE_OF], operations: [resolve_term, hierarchy_expansion]}
+    acceptable_sequences: [B_HIER, C_SEARCH_TRAVERSE, C_SEARCH_NEIGHBORS2, D_PROFILE]
+    expected:
+      answer_ids: [S_NOT_CHARGING, S_POWER]
+  - id: Q09
+    split: test
+    category: hierarchy
+    complexity: 3
+    question: The symptom 'Wi-Fi Keeps Disconnecting' has no checklist of its own. Which checklist should be used for it, and which symptom does that checklist come from?
+    required: {objects: [Symptom, DiagnosticChecklist], relationships: [SUBTYPE_OF, HAS_CHECKLIST], operations: [resolve_term, hierarchy_expansion, neighbor_lookup]}
+    acceptable_sequences: [B_CHECKLIST, C_SEARCH_TRAVERSE_NEIGHBORS, C_SEARCH_NEIGHBORS2, C_SEARCH_NEIGHBORS3, D_PROFILE]
+    argument_checks: {get_diagnostic_checklist: [S_WIFI_DROPS]}
+    expected:
+      answer_ids: [CL_WIFI, S_WIFI]
+      evidence_edges: [[S_WIFI_DROPS, SUBTYPE_OF, S_WIFI], [S_WIFI, HAS_CHECKLIST, CL_WIFI]]
+  - id: Q10
+    split: test
+    category: hierarchy
+    complexity: 3
+    question: What components can cause charging-related symptoms, meaning 'Laptop Not Charging' and all of its subtypes?
+    required: {objects: [Symptom, Component], relationships: [SUBTYPE_OF, INDICATES], operations: [resolve_term, hierarchy_expansion, neighbor_lookup]}
+    acceptable_sequences: [C_SEARCH_TRAVERSE_NEIGHBORS, C_SEARCH_TRAVERSE, C_SEARCH_NEIGHBORS3, D_PROFILE]
+    expected:
+      answer_ids: [C_AC_ADAPTER, C_CHARGING_PORT, C_BATTERY, C_MOTHERBOARD, C_FIRMWARE]
+      min_recall: 0.8
+
+  # ----------------------------------------------------------- multi-hop traversal
+  - id: Q11
+    split: test
+    category: multi_hop
+    complexity: 2
+    question: What diagnostic steps are associated with laptop not charging? List them in order.
+    required: {objects: [Symptom, DiagnosticChecklist, DiagnosticAction], relationships: [HAS_CHECKLIST, CONTAINS], operations: [resolve_term, neighbor_lookup]}
+    acceptable_sequences: [B_STEPS, C_SEARCH_NEIGHBORS2, C_SEARCH_TRAVERSE, D_PROFILE]
+    argument_checks: {get_diagnostic_checklist: [S_NOT_CHARGING], get_diagnostic_actions: [CL_NOT_CHARGING]}
+    expected:
+      answer_ids: [A_CHECK_POWER_LED, A_VERIFY_ADAPTER, A_TRY_OTHER_OUTLET, A_INSPECT_PORT, A_POWER_RESET, A_TRY_KNOWN_GOOD_ADAPTER, A_CHECK_BATTERY_HEALTH, A_BIOS_UPDATE, A_DISPATCH_REPAIR]
+      min_recall: 0.85
+  - id: Q12
+    split: dev
+    category: multi_hop
+    complexity: 2
+    question: What are the troubleshooting steps for a black screen?
+    required: {objects: [Symptom, DiagnosticChecklist, DiagnosticAction], relationships: [HAS_CHECKLIST, CONTAINS], operations: [resolve_term, neighbor_lookup]}
+    acceptable_sequences: [B_STEPS, C_SEARCH_NEIGHBORS2, C_SEARCH_TRAVERSE, D_PROFILE]
+    expected:
+      answer_ids: [A_CHECK_POWER_LED, A_BRIGHTNESS_CHECK, A_POWER_RESET, A_EXTERNAL_MONITOR_TEST, A_DISPLAY_SELF_TEST, A_GPU_DRIVER_UPDATE, A_RESEAT_RAM, A_DISPATCH_REPAIR]
+      min_recall: 0.85
+  - id: Q13
+    split: test
+    category: multi_hop
+    complexity: 3
+    question: Which diagnostic actions are shared between the checklist for 'Black Screen' and the checklist for 'Laptop Won't Power On'?
+    required: {objects: [Symptom, DiagnosticChecklist, DiagnosticAction], relationships: [HAS_CHECKLIST, CONTAINS], operations: [resolve_term, neighbor_lookup]}
+    acceptable_sequences: [B_STEPS, C_SEARCH_NEIGHBORS2, C_SEARCH_TRAVERSE, D_PROFILE]
+    expected:
+      answer_ids: [A_CHECK_POWER_LED, A_POWER_RESET, A_RESEAT_RAM, A_DISPATCH_REPAIR]
+      max_extra: 8   # an answer may list both checklists before giving the overlap
+  - id: Q14
+    split: test
+    category: multi_hop
+    complexity: 3
+    question: Which knowledge articles are relevant to the steps of the checklist for a swollen battery?
+    required: {objects: [Symptom, DiagnosticChecklist, DiagnosticAction, KnowledgeArticle], relationships: [HAS_CHECKLIST, CONTAINS, DESCRIBES], operations: [resolve_term, neighbor_lookup]}
+    acceptable_sequences: [B_STEPS_KNOWLEDGE, C_SEARCH_NEIGHBORS3, C_SEARCH_TRAVERSE, D_PROFILE]
+    expected:
+      answer_ids: [KA_1050, KA_1110]
+  - id: Q15
+    split: dev
+    category: multi_hop
+    complexity: 3
+    question: Which decision rules apply to the steps of the keyboard checklist?
+    required: {objects: [Symptom, DiagnosticChecklist, DiagnosticAction, DecisionRule], relationships: [HAS_CHECKLIST, CONTAINS, GOVERNED_BY], operations: [resolve_term, neighbor_lookup]}
+    acceptable_sequences: [B_STEPS_RULES, C_SEARCH_NEIGHBORS3, C_SEARCH_NEIGHBORS2, C_SEARCH_TRAVERSE, D_PROFILE]
+    expected:
+      answer_ids: [R_ADMIN_RIGHTS, R_POWERED_OFF_CLEANING, R_WARRANTY_REPAIR]
+
+  # -------------------------------------------------------- relationship discovery
+  - id: Q16
+    split: test
+    category: relationship_discovery
+    complexity: 3
+    question: How is the 'Black Screen' symptom connected to the knowledge article 'Power Reset Procedure'?
+    required: {objects: [Symptom, KnowledgeArticle, DiagnosticChecklist, DiagnosticAction], relationships: [HAS_CHECKLIST, CONTAINS, DESCRIBES], operations: [resolve_term, neighbor_lookup]}
+    acceptable_sequences: [C_SEARCH_PATH, C_SEARCH_NEIGHBORS3, C_SEARCH_TRAVERSE, B_STEPS_KNOWLEDGE, D_PROFILE]
+    expected:
+      answer_ids: [CL_BLACK_SCREEN, A_POWER_RESET]
+  - id: Q17
+    split: dev
+    category: relationship_discovery
+    complexity: 2
+    question: What kinds of relationships can a Diagnostic Action have with other objects in the ontology?
+    required: {objects: [DiagnosticAction], operations: [schema_discovery]}
+    acceptable_sequences: [C_RELTYPES, C_SCHEMA]
+    expected:
+      answer_text: [[CONTAINS], [HAS_OUTCOME], [LEADS_TO], [GOVERNED_BY], [DESCRIBES]]
+      min_recall: 0.8
+  - id: Q18
+    split: test
+    category: relationship_discovery
+    complexity: 3
+    question: Which symptoms can indicate a problem with the Main Board?
+    required: {objects: [Component, Symptom], relationships: [INDICATES], operations: [resolve_term, neighbor_lookup]}
+    acceptable_sequences: [C_SEARCH_NEIGHBORS, D_PROFILE]
+    expected:
+      answer_ids: [S_NOT_CHARGING, S_NO_POWER, S_UNEXPECTED_SHUTDOWN, S_BATTERY_NOT_DETECTED, S_BLACK_SCREEN]
+      min_recall: 0.8
+
+  # ------------------------------------------------- operational data aggregation
+  - id: Q19
+    split: test
+    category: operational_aggregation
+    complexity: 1
+    question: What is the overall Fix-on-Phone Rate across all service cases?
+    required: {objects: [ServiceCase], operations: [metric_aggregation], data: [fix_on_phone_rate]}
+    acceptable_sequences: [SV]
+    argument_checks: {query_semantic_view: [fix_on_phone_rate]}
+    expected:
+      reference_queries:
+        - query: {metrics: [fix_on_phone_rate]}
+  - id: Q20
+    split: dev
+    category: operational_aggregation
+    complexity: 1
+    question: What is the average handle time for cases received by chat?
+    required: {objects: [ServiceCase], operations: [metric_aggregation], data: [average_handle_time, channel]}
+    acceptable_sequences: [SV]
+    argument_checks: {query_semantic_view: [average_handle_time, chat]}
+    expected:
+      reference_queries:
+        - query: {metrics: [average_handle_time], filters: [{dimension: channel, operator: "=", value: chat}]}
+  - id: Q21
+    split: test
+    category: operational_aggregation
+    complexity: 2
+    question: Which symptom generates the most work orders?
+    required: {objects: [WorkOrder, Symptom], relationships: [GENERATES, HAS_SYMPTOM], operations: [metric_aggregation], data: [work_order_count, symptom_name]}
+    acceptable_sequences: [SV]
+    argument_checks: {query_semantic_view: [work_order_count]}
+    expected:
+      reference_queries:
+        - query: {metrics: [work_order_count], dimensions: [symptom_name], order_by: work_order_count, limit: 3}
+          check: top_dimension
+          dimension: symptom_name
+  - id: Q22
+    split: test
+    category: operational_aggregation
+    complexity: 2
+    question: What is the escalation rate for the 'Display' call driver?
+    required: {objects: [ServiceCase, CallDriver], relationships: [HAS_DRIVER], operations: [metric_aggregation], data: [escalation_rate, call_driver_name]}
+    acceptable_sequences: [SV, SV_DRIVER]
+    argument_checks: {query_semantic_view: [escalation_rate]}
+    expected:
+      reference_queries:
+        - query: {metrics: [escalation_rate], filters: [{dimension: call_driver_id, operator: "=", value: CD_DISPLAY}]}
+  - id: Q23
+    split: dev
+    category: operational_aggregation
+    complexity: 2
+    question: Which diagnostic action has been performed most often?
+    required: {objects: [DiagnosticExecution, DiagnosticAction], relationships: [PERFORMED_ACTION], operations: [metric_aggregation], data: [action_execution_count, action_name]}
+    acceptable_sequences: [SV]
+    expected:
+      reference_queries:
+        - query: {metrics: [action_execution_count], dimensions: [action_name], order_by: action_execution_count, limit: 3}
+          check: top_dimension
+          dimension: action_name
+
+  # ------------------------------------------------- combined ontology + SQL queries
+  - id: Q24
+    split: test
+    category: combined_ontology_sql
+    complexity: 4
+    question: What is the Fix-on-Phone Rate for cases whose symptom is 'Laptop Not Charging' or any of its subtypes?
+    required: {objects: [Symptom, ServiceCase], relationships: [SUBTYPE_OF, HAS_SYMPTOM], operations: [resolve_term, hierarchy_expansion, metric_aggregation], data: [fix_on_phone_rate, symptom_id]}
+    acceptable_sequences: [B_HIER_SV, C_SEARCH_TRAVERSE_SV, C_SEARCH_NEIGHBORS_SV, D_PROFILE_SV]
+    argument_checks: {query_semantic_view: [fix_on_phone_rate, S_NOT_CHARGING, S_CHARGING_INTERMITTENT, S_PLUGGED_NOT_CHARGING]}
+    expected:
+      evidence_ids: [S_CHARGING_INTERMITTENT, S_PLUGGED_NOT_CHARGING]
+      reference_queries:
+        - query:
+            metrics: [fix_on_phone_rate]
+            filters: [{dimension: symptom_id, operator: in, value: [S_NOT_CHARGING, S_CHARGING_INTERMITTENT, S_PLUGGED_NOT_CHARGING]}]
+  - id: Q25
+    split: test
+    category: combined_ontology_sql
+    complexity: 4
+    question: Which troubleshooting action has the highest success rate across charging-related cases, meaning cases for 'Laptop Not Charging' and all of its subtypes?
+    required: {objects: [Symptom, DiagnosticExecution, DiagnosticAction], relationships: [SUBTYPE_OF, HAS_SYMPTOM, PERFORMED_ACTION], operations: [resolve_term, hierarchy_expansion, metric_aggregation], data: [diagnostic_action_success_rate, action_name, symptom_id]}
+    acceptable_sequences: [B_HIER_SV, C_SEARCH_TRAVERSE_SV, C_SEARCH_NEIGHBORS_SV, D_PROFILE_SV]
+    argument_checks: {query_semantic_view: [diagnostic_action_success_rate, S_CHARGING_INTERMITTENT, S_PLUGGED_NOT_CHARGING]}
+    expected:
+      evidence_ids: [S_CHARGING_INTERMITTENT, S_PLUGGED_NOT_CHARGING]
+      reference_queries:
+        - query:
+            metrics: [diagnostic_action_success_rate]
+            dimensions: [action_name]
+            filters: [{dimension: symptom_id, operator: in, value: [S_NOT_CHARGING, S_CHARGING_INTERMITTENT, S_PLUGGED_NOT_CHARGING]}]
+            order_by: diagnostic_action_success_rate
+            limit: 3
+          check: top_dimension
+          dimension: action_name
+  - id: Q26
+    split: test
+    category: combined_ontology_sql
+    complexity: 4
+    question: Compare the escalation rate of all symptoms under 'Display Issue' with that of all symptoms under 'Power Issue'.
+    required: {objects: [Symptom, ServiceCase], relationships: [SUBTYPE_OF, HAS_SYMPTOM], operations: [resolve_term, hierarchy_expansion, metric_aggregation], data: [escalation_rate, symptom_id]}
+    acceptable_sequences: [B_HIER_SV, C_SEARCH_TRAVERSE_SV, D_PROFILE_SV]
+    argument_checks: {query_semantic_view: [escalation_rate, S_DISPLAY_FLICKER, S_BATTERY_DRAIN]}
+    expected:
+      evidence_ids: [S_DISPLAY_FLICKER, S_DISPLAY_LINES, S_BATTERY_DRAIN, S_UNEXPECTED_SHUTDOWN]
+      reference_queries:
+        - query:
+            metrics: [escalation_rate]
+            filters: [{dimension: symptom_id, operator: in, value: [S_BLACK_SCREEN, S_DISPLAY_FAILURE, S_DISPLAY_FLICKER, S_DISPLAY_LINES]}]
+        - query:
+            metrics: [escalation_rate]
+            filters: [{dimension: symptom_id, operator: in, value: [S_NOT_CHARGING, S_CHARGING_INTERMITTENT, S_PLUGGED_NOT_CHARGING, S_NO_POWER, S_UNEXPECTED_SHUTDOWN, S_BATTERY_DRAIN, S_BATTERY_SWOLLEN, S_BATTERY_NOT_DETECTED]}]
+  - id: Q27
+    split: dev
+    category: combined_ontology_sql
+    complexity: 4
+    question: How many work orders were generated by cases whose symptom falls under 'Battery Issue'?
+    required: {objects: [Symptom, WorkOrder], relationships: [SUBTYPE_OF, HAS_SYMPTOM, GENERATES], operations: [resolve_term, hierarchy_expansion, metric_aggregation], data: [work_order_count, symptom_id]}
+    acceptable_sequences: [B_HIER_SV, C_SEARCH_TRAVERSE_SV, C_SEARCH_NEIGHBORS_SV, D_PROFILE_SV]
+    argument_checks: {query_semantic_view: [work_order_count, S_BATTERY_DRAIN, S_BATTERY_SWOLLEN, S_BATTERY_NOT_DETECTED]}
+    expected:
+      evidence_ids: [S_BATTERY_DRAIN, S_BATTERY_SWOLLEN, S_BATTERY_NOT_DETECTED]
+      reference_queries:
+        - query:
+            metrics: [work_order_count]
+            filters: [{dimension: symptom_id, operator: in, value: [S_BATTERY_DRAIN, S_BATTERY_SWOLLEN, S_BATTERY_NOT_DETECTED]}]
+  - id: Q28
+    split: test
+    category: combined_ontology_sql
+    complexity: 4
+    question: What is the Fix-on-Phone Rate for each call driver that is linked to a symptom which can indicate the Battery component?
+    required: {objects: [Component, Symptom, CallDriver, ServiceCase], relationships: [INDICATES, HAS_CALL_DRIVER, HAS_DRIVER], operations: [resolve_term, neighbor_lookup, metric_aggregation], data: [fix_on_phone_rate, call_driver_id]}
+    acceptable_sequences: [C_SEARCH_NEIGHBORS2_SV, C_SEARCH_TRAVERSE_SV, D_PROFILE_SV]
+    argument_checks: {query_semantic_view: [fix_on_phone_rate]}
+    expected:
+      answer_ids: [CD_POWER, CD_BATTERY]
+      reference_queries:
+        - query:
+            metrics: [fix_on_phone_rate]
+            dimensions: [call_driver_id]
+            filters: [{dimension: call_driver_id, operator: in, value: [CD_POWER, CD_BATTERY]}]
+
+  # --------------------------------------------------- conditional diagnostic workflows
+  - id: Q29
+    split: test
+    category: conditional_workflow
+    complexity: 3
+    question: While following the black screen checklist, a power reset made no difference. What should the agent do next?
+    required: {objects: [DiagnosticAction, ActionOutcome], relationships: [HAS_OUTCOME, LEADS_TO], operations: [conditional_branching]}
+    acceptable_sequences: [B_STEPS_NEXT, B_SV_NEXT, C_SEARCH_NEIGHBORS2, C_SEARCH_NEIGHBORS2_RULE, C_SEARCH_NEIGHBORS3, D_PROFILE]
+    argument_checks: {get_next_action: [A_POWER_RESET, CL_BLACK_SCREEN]}
+    expected:
+      answer_ids: [A_EXTERNAL_MONITOR_TEST]
+      evidence_edges: [[O_POWER_RESET__NO_CHANGE, LEADS_TO, A_EXTERNAL_MONITOR_TEST]]
+  - id: Q30
+    split: test
+    category: conditional_workflow
+    complexity: 4
+    question: A customer's battery fails the battery health check. The laptop has a removable battery, it is under warranty, and the battery is a customer-replaceable part on this model. What is the next action, and is the customer eligible for it?
+    required: {objects: [DiagnosticAction, ActionOutcome, DecisionRule], relationships: [HAS_OUTCOME, LEADS_TO, GOVERNED_BY], operations: [conditional_branching, rule_evaluation]}
+    acceptable_sequences: [B_STEPS_NEXT, B_STEPS_NEXT_RULES, B_SV_NEXT, C_SEARCH_NEIGHBORS2_RULE, C_SEARCH_NEIGHBORS3, D_PROFILE]
+    argument_checks: {get_next_action: [A_CHECK_BATTERY_HEALTH, removable_battery]}
+    expected:
+      answer_ids: [A_SHIP_PART]
+      answer_text: [[eligible, satisfied, qualif, "meets", "is met", "are met", allowed, "can be shipped", "can ship"]]
+      evidence_ids: [A_SHIP_PART, R_CRU_ENTITLEMENT]
+  - id: Q31
+    split: dev
+    category: conditional_workflow
+    complexity: 3
+    question: In the Wi-Fi checklist, checking other devices shows that other devices connect normally. What is the next step?
+    required: {objects: [DiagnosticAction, ActionOutcome], relationships: [HAS_OUTCOME, LEADS_TO], operations: [conditional_branching]}
+    acceptable_sequences: [B_STEPS_NEXT, B_SV_NEXT, C_SEARCH_NEIGHBORS2, C_SEARCH_NEIGHBORS2_RULE, D_PROFILE]
+    expected:
+      answer_ids: [A_FORGET_REJOIN]
+  - id: Q32
+    split: test
+    category: conditional_workflow
+    complexity: 3
+    question: Which diagnostic actions are governed by safety rules, and which rules are they?
+    required: {objects: [DecisionRule, DiagnosticAction], relationships: [GOVERNED_BY], operations: [filter_objects, neighbor_lookup], data: [category]}
+    acceptable_sequences: [C_QUERY_NEIGHBORS, C_SEARCH_NEIGHBORS, D_PROFILE]
+    expected:
+      answer_ids: [R_BIOS_POWER, R_OPEN_CHASSIS, R_NO_SWOLLEN_BATTERY, R_POWERED_OFF_CLEANING, A_BIOS_UPDATE, A_RESEAT_RAM, A_RESEAT_BATTERY, A_POWER_RESET, A_BATTERY_CALIBRATION, A_TRY_KNOWN_GOOD_ADAPTER, A_CHECK_BATTERY_HEALTH, A_CLEAN_KEYBOARD]
+      min_recall: 0.75
+  - id: Q33
+    split: test
+    category: conditional_workflow
+    complexity: 3
+    question: Can a BIOS and firmware update be performed when the laptop is on AC power, the battery is at 10 percent, and the user has administrator rights?
+    required: {objects: [DiagnosticAction, DecisionRule], relationships: [GOVERNED_BY], operations: [rule_evaluation]}
+    acceptable_sequences: [B_SV_RULES, B_STEPS_RULES, C_SEARCH_NEIGHBORS_RULE, D_PROFILE]
+    argument_checks: {get_action_constraints: [A_BIOS_UPDATE, battery_percent], evaluate_rule: [battery_percent]}
+    expected:
+      answer_ids: [R_BIOS_POWER]
+      answer_text: [[cannot, "can't", "should not", "must not", "not be performed", "not eligible", "not allowed", "not satisfied", "not met", violat, "no,", "No."]]
+
+  # --------------------------------------------------------- ambiguous terminology
+  - id: Q34
+    split: test
+    category: ambiguous_terminology
+    complexity: 3
+    question: A customer says their 'screen is dead'. Which checklist should the agent follow?
+    required: {objects: [Symptom], operations: [resolve_term]}
+    acceptable_sequences: [B_SYM, C_SEARCH, D_PROFILE]
+    expected:
+      behavior: clarify
+      answer_ids: [S_BLACK_SCREEN, S_DISPLAY_FAILURE]
+      evidence_ids: []
+      notes: The phrase fits two symptoms with different checklists; the agent should name both and ask.
+  - id: Q35
+    split: test
+    category: ambiguous_terminology
+    complexity: 2
+    question: My computer won't take a charge. What is the first thing to check?
+    required: {objects: [Symptom, DiagnosticChecklist, DiagnosticAction], relationships: [HAS_CHECKLIST, CONTAINS], operations: [resolve_term, neighbor_lookup]}
+    acceptable_sequences: [B_STEPS, C_SEARCH_NEIGHBORS2, C_SEARCH_TRAVERSE, D_PROFILE]
+    expected:
+      answer_ids: [A_CHECK_POWER_LED]
+  - id: Q36
+    split: test
+    category: ambiguous_terminology
+    complexity: 4
+    question: What is the escalation rate for power-related problems?
+    required: {objects: [Symptom, ServiceCase], relationships: [HAS_SYMPTOM], operations: [terminology_mapping, metric_aggregation], data: [escalation_rate]}
+    acceptable_sequences: [D_PROFILE_SV, SV]
+    argument_checks: {query_semantic_view: [escalation_rate]}
+    expected:
+      notes: By the curated business definition, power-related problems are the five power symptoms and exclude battery symptoms.
+      reference_queries:
+        - query:
+            metrics: [escalation_rate]
+            filters: [{dimension: symptom_id, operator: in, value: [S_NOT_CHARGING, S_CHARGING_INTERMITTENT, S_PLUGGED_NOT_CHARGING, S_NO_POWER, S_UNEXPECTED_SHUTDOWN]}]
+  - id: Q37
+    split: dev
+    category: ambiguous_terminology
+    complexity: 3
+    question: A customer says their laptop is 'bricked'. Which checklist applies?
+    required: {objects: [Symptom, DiagnosticChecklist], relationships: [HAS_CHECKLIST], operations: [terminology_mapping, neighbor_lookup]}
+    acceptable_sequences: [D_PROFILE]
+    expected:
+      answer_ids: [CL_NO_POWER]
+
+  # ------------------------------------------------------------- unsupported tasks
+  - id: Q38
+    split: test
+    category: unsupported
+    complexity: 1
+    question: Add a new symptom called 'Overheating' to the ontology under 'Power Issue'.
+    required: {objects: [Symptom], operations: [ontology_write]}
+    acceptable_sequences: []
+    expected:
+      behavior: abstain
+      notes: No tool can modify the ontology.
+  - id: Q39
+    split: test
+    category: unsupported
+    complexity: 1
+    question: What is the retail price of a replacement battery for the AeroBook Air 13?
+    required: {objects: [Component], data: [retail_price]}
+    acceptable_sequences: []
+    expected:
+      behavior: abstain
+      notes: Neither the ontology nor the operational data holds part prices.
+  - id: Q40
+    split: dev
+    category: unsupported
+    complexity: 2
+    question: Email the steps of the Wi-Fi checklist to the customer.
+    required: {objects: [DiagnosticChecklist], operations: [send_email]}
+    acceptable_sequences: []
+    expected:
+      behavior: abstain
+      notes: No tool can send email; listing the steps is fine as long as the agent says it cannot send them.
+
+  # ----------------------------------------------------------- missing information
+  - id: Q41
+    split: test
+    category: missing_information
+    complexity: 2
+    question: What are the diagnostic steps for 'Touchpad Not Working'?
+    required: {objects: [Symptom, DiagnosticChecklist], relationships: [HAS_CHECKLIST], operations: [resolve_term, neighbor_lookup]}
+    acceptable_sequences: [B_CHECKLIST, C_SEARCH_NEIGHBORS, C_SEARCH_TRAVERSE, D_PROFILE]
+    ontology_gap: knowledge
+    expected:
+      behavior: abstain
+      evidence_ids: []
+      notes: The ontology defines no checklist for this symptom or its parent; the agent should say so.
+  - id: Q42
+    split: test
+    category: missing_information
+    complexity: 3
+    question: After a battery health check shows the battery is degraded, what is the next action?
+    required: {objects: [DiagnosticAction, ActionOutcome], relationships: [HAS_OUTCOME, LEADS_TO], operations: [conditional_branching]}
+    acceptable_sequences: [B_STEPS_NEXT, B_SV_NEXT, C_SEARCH_NEIGHBORS2, C_SEARCH_NEIGHBORS3, D_PROFILE]
+    expected:
+      answer_ids: [A_SHIP_PART, A_DISPATCH_REPAIR]
+      answer_text: [[removable]]
+      notes: The branch depends on whether the battery is removable, which the question does not say; both branches and the condition should be given.
+  - id: Q43
+    split: dev
+    category: missing_information
+    complexity: 2
+    question: Which knowledge article describes the 'Reseat Removable Battery' action?
+    required: {objects: [DiagnosticAction, KnowledgeArticle], relationships: [DESCRIBES], operations: [resolve_term, neighbor_lookup]}
+    acceptable_sequences: [C_SEARCH_NEIGHBORS, B_SV_KNOWLEDGE, D_PROFILE]
+    ontology_gap: knowledge
+    expected:
+      behavior: abstain
+      evidence_ids: []
+
+  # ------------------------------------------- conflicting or outdated knowledge
+  - id: Q44
+    split: test
+    category: conflicting_knowledge
+    complexity: 3
+    question: According to the knowledge base, how long should the power button be held during a power reset?
+    required: {objects: [DiagnosticAction, KnowledgeArticle], relationships: [DESCRIBES], operations: [resolve_term, neighbor_lookup], data: [status]}
+    acceptable_sequences: [C_SEARCH_NEIGHBORS, C_SEARCH_NEIGHBORS2, B_SV_KNOWLEDGE, B_STEPS_KNOWLEDGE, D_PROFILE]
+    argument_checks: {get_related_knowledge: [A_POWER_RESET]}
+    expected:
+      answer_text: [["30"]]
+      evidence_ids: [KA_1044]
+      notes: Two articles disagree (10 seconds, superseded; 30 seconds, current). The current one wins.
+  - id: Q45
+    split: test
+    category: conflicting_knowledge
+    complexity: 3
+    question: Which knowledge articles about updating the BIOS or firmware are current, and which are out of date?
+    required: {objects: [DiagnosticAction, KnowledgeArticle], relationships: [DESCRIBES], operations: [resolve_term, neighbor_lookup], data: [status]}
+    acceptable_sequences: [C_SEARCH_NEIGHBORS, C_SEARCH_NEIGHBORS2, C_QUERY, C_SEARCH_OBJECT, B_SV_KNOWLEDGE, B_STEPS_KNOWLEDGE, D_PROFILE]
+    expected:
+      answer_ids: [KA_1060, KA_1061]
+      answer_text: [[outdated, "out of date", "out-of-date"]]
+  - id: Q46
+    split: dev
+    category: conflicting_knowledge
+    complexity: 3
+    question: Has the 'Power Reset Procedure (2021)' article been replaced, and if so by which article?
+    required: {objects: [KnowledgeArticle], relationships: [SUPERSEDES], operations: [resolve_term, neighbor_lookup]}
+    acceptable_sequences: [C_SEARCH_NEIGHBORS, B_SV_KNOWLEDGE, D_PROFILE]
+    expected:
+      answer_ids: [KA_1044]
+      evidence_edges: [[KA_1044, SUPERSEDES, KA_1012]]
