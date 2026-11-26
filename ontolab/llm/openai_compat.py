@@ -1,5 +1,4 @@
-"""Any OpenAI-compatible chat-completions API: OpenAI, a local Ollama or LM Studio
-server, and other compatible providers. Standard library only."""
+"""OpenAI chat-completions client with tool calling. Standard library only."""
 
 from __future__ import annotations
 

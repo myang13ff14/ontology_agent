@@ -81,10 +81,10 @@ function renderSidebar() {
 
     h('section', {},
       h('h3', {}, 'Experiment controls'),
-      field('Model for requests', select([{ value: '', label: 'server default' }, ...status.llm_providers.map((p) => ({ value: p, label: p }))],
+      field('Model for requests', select([{ value: '', label: 'server default' }, { value: 'openai', label: 'OpenAI (name a model below)' }, { value: 'mock', label: 'mock policy (no AI)' }],
         experiment.llmProvider, (v) => setExperiment({ llmProvider: v }))),
       h('div', { style: { height: '6px' } }),
-      field('Model name (optional)', h('input', { type: 'text', value: experiment.llmModel, placeholder: 'provider default',
+      field('Model name (optional)', h('input', { type: 'text', value: experiment.llmModel, placeholder: 'e.g. gpt-5.5',
         onchange: (e) => setExperiment({ llmModel: e.target.value.trim() }) })),
       h('div', { style: { height: '6px' } }),
       field(`Max tool calls per question (default ${limits.max_tool_calls})`, h('input', { type: 'number', min: 0, max: 40,

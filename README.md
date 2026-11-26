@@ -6,14 +6,14 @@ agent reaches an ontology through different access mechanisms, and why it succee
 It reimplements the architecture of Snowflake's engineering post
 [Ontology-grounded Reasoning with Cortex Agents](https://www.snowflake.com/en/blog/engineering/ontology-grounded-cortex-agents/)
 without Snowflake: DuckDB instead of Snowflake tables, recursive SQL instead of stored procedures,
-a small semantic layer instead of Cortex Analyst, and any tool-calling LLM instead of Cortex Agents.
+a small semantic layer instead of Cortex Analyst, and an OpenAI tool-calling model instead of Cortex Agents.
 
 > **All data is synthetic.** The laptop-support ontology, products, procedures, rules, articles and
 > the 2,000 service cases are invented for demonstration.
 
 > **No model results are included.** Without credentials the lab runs a *mock model*: a fixed policy
 > that exercises the pipeline. Mock runs are labelled everywhere and say nothing about how well a
-> real model uses the ontology. Configure a model (below) to produce real results.
+> real model uses the ontology. Set an OpenAI model (below) to produce real results.
 
 ## Research questions
 
@@ -50,19 +50,23 @@ Open **http://localhost:8600**. API documentation is at http://localhost:8600/do
 DuckDB allows one process at a time, so the `ontolab.cli` commands need the backend to be stopped;
 while it is running, use the web interface or the API for the same operations.
 
-### Choosing a model
+### Setting the model
 
-Copy `.env.example` to `.env` and fill in one block. Nothing else changes.
+The lab uses OpenAI models. Copy `.env.example` to `.env` and set:
 
-| `LLM_PROVIDER` | What it uses | Needs |
-|---|---|---|
-| `mock` (default) | Fixed policy, no AI | nothing |
-| `openai` | Any OpenAI-compatible chat-completions API | `LLM_API_KEY`, `LLM_MODEL` (`LLM_BASE_URL` for other providers) |
-| `anthropic` | Claude through the official SDK | `ANTHROPIC_API_KEY` (model defaults to `claude-opus-5-5`) |
-| `local` | Ollama / LM Studio at `http://localhost:11434/v1` | `LLM_MODEL` |
+```
+LLM_PROVIDER=openai
+LLM_API_KEY=<your OpenAI key>
+LLM_MODEL=<an OpenAI model that supports tool calling>
+```
 
-The model must support tool (function) calling. The web interface can also switch provider per
-request, which is how you change the LLM while keeping the tool registry fixed.
+The model must support tool (function) calling through the Chat Completions API. Some OpenAI
+reasoning models accept tools there only with `LLM_REASONING_EFFORT=none`. The web interface can
+switch the model name per request, which is how you change the model while keeping the tool
+registry fixed.
+
+With no model set, the lab falls back to the **mock** policy: a fixed rule that picks tools by word
+overlap. It exists so the tests and the pipeline run without credentials; it is not a model.
 
 ## Architecture
 
@@ -72,7 +76,7 @@ web/  (JavaScript, no build step)          five sections, served by the backend
 ontolab/api        FastAPI service
   ├─ agents/       five configurations + the tool-calling runtime
   ├─ evaluation/   benchmark, coverage analysis, scoring, failure attribution, runner
-  ├─ llm/          provider-neutral clients: OpenAI-compatible, Anthropic, mock
+  ├─ llm/          the OpenAI client and the mock policy used by tests
   ├─ tools/        tool registry + domain, generic, semantic and retrieval tools     ← Layer 4
   ├─ graphrag/     flattened profiles, hybrid retrieval, terminology mappings
   ├─ ontology/     definition format, ingestion, SQL graph store, rule evaluation    ← Layer 3
