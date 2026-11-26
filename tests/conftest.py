@@ -7,6 +7,7 @@ os.environ["ONTOLAB_RUNS_DIR"] = tempfile.mkdtemp(prefix="ontolab-test-runs-")
 for name in ("LLM_PROVIDER", "LLM_MODEL", "LLM_API_KEY", "LLM_BASE_URL", "EMBEDDING_MODEL"):
     os.environ.pop(name, None)
 os.environ["LLM_PROVIDER"] = "mock"
+os.environ["ONTOLAB_SKIP_ENV_FILE"] = "1"  # tests never read real keys or call a real model
 
 from ontolab.agents.runtime import AgentRuntime  # noqa: E402
 from ontolab.config import Settings  # noqa: E402

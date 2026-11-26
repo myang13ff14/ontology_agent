@@ -11,8 +11,8 @@ DATA_DIR = ROOT / "data"
 
 
 def load_env_file(path: Path = ROOT / ".env") -> None:
-    """Minimal .env reader. Real environment variables win."""
-    if not path.exists():
+    """Minimal .env reader. Real environment variables win. Set ONTOLAB_SKIP_ENV_FILE=1 to ignore the file."""
+    if os.environ.get("ONTOLAB_SKIP_ENV_FILE") or not path.exists():
         return
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
