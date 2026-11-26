@@ -249,3 +249,57 @@ def test_end_to_end_mock_evaluation_is_recorded_and_flagged(evaluation):
     assert stored["settings"]["repeats"] == 2 and stored["results"][0]["trace"]["tool_calls"] is not None
     assert output["run_id"] in [r["run_id"] for r in evaluation.list_runs()]
     assert evaluation.load_run("../../etc/passwd") is None
+
+
+# ------------------------------------------------------------------ memory
+
+def test_runtime_replays_history_and_returns_only_the_new_turn(services):
+    first = Scripted([call("resolve_symptom", {"term": "screen is dead"}), say("Black Screen or Display Failure: which one?")])
+    runtime = AgentRuntime(services, first)
+    turn1 = runtime.run("The screen is dead. Which checklist?", "B")
+    remembered = turn1["_turn_messages"]
+    assert [m["role"] for m in remembered] == ["user", "assistant", "tool", "assistant"]
+    assert turn1["memory"]["replayed_messages"] == 0
+
+    second = Scripted([say("Then follow the Black Screen Checklist.")])
+    turn2 = AgentRuntime(services, second).run("It still powers on.", "B", history=remembered)
+    sent = second.requests[0]["messages"]
+    assert [m["role"] for m in sent] == ["user", "assistant", "tool", "assistant", "user"]
+    assert sent[0]["content"].startswith("The screen is dead") and sent[-1]["content"] == "It still powers on."
+    assert sent[2]["tool_call_id"] == "c1", "a remembered tool call keeps its result"
+    assert turn2["memory"]["replayed_messages"] == 4
+    assert [m["role"] for m in turn2["_turn_messages"]] == ["user", "assistant"]
+    assert turn2["metrics"]["tool_call_count"] == 0, "counts cover this turn only"
+
+
+def test_memory_is_a_sliding_window_of_whole_turns():
+    from ontolab.agents.memory import ConversationMemory
+    memory = ConversationMemory(max_turns=2)
+    conversation = memory.start("B")
+    for i in range(1, 5):
+        memory.remember(conversation, f"q{i}", [{"role": "user", "content": f"q{i}"}, {"role": "assistant", "content": f"a{i}"}])
+    assert [m["content"] for m in memory.history(conversation)] == ["q3", "a3", "q4", "a4"]
+    info = memory.describe(conversation)
+    assert (info["turn"], info["remembered_turns"], info["dropped_turns"], info["window"]) == (4, 2, 2, 2)
+    assert info["remembered_questions"] == ["q3", "q4"]
+    assert memory.get(conversation.conversation_id) is conversation
+    assert memory.forget(conversation.conversation_id) and memory.get(conversation.conversation_id) is None
+
+
+def test_memory_expires_and_is_bounded():
+    from ontolab.agents.memory import ConversationMemory
+    expiring = ConversationMemory(ttl_s=0)
+    assert expiring.get(expiring.start("A").conversation_id) is None
+    small = ConversationMemory(max_conversations=2)
+    first, second, third = small.start("A"), small.start("A"), small.start("A")
+    assert small.get(first.conversation_id) is None and small.get(second.conversation_id) and small.get(third.conversation_id)
+    off = ConversationMemory(max_turns=0)
+    conversation = off.start("A")
+    off.remember(conversation, "q", [{"role": "user", "content": "q"}])
+    assert off.history(conversation) == [] and off.describe(conversation)["dropped_turns"] == 1
+
+
+def test_benchmark_runs_never_carry_memory(evaluation):
+    output = evaluation.run(configs=["A"], split="dev", limit=2)
+    for result in output["results"]:
+        assert result["trace"]["memory"]["replayed_messages"] == 0 and "_turn_messages" not in result["trace"]

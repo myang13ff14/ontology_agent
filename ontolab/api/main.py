@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..agents.configs import CONFIGS, system_prompt
+from ..agents.memory import ConversationMemory
 from ..config import ROOT
 from ..agents.runtime import AgentRuntime
 from ..errors import ToolError
@@ -42,6 +43,7 @@ def install(services: Services, llm=None) -> None:
     state["services"] = services
     state["runtime"] = AgentRuntime(services, llm)
     state["evaluation"] = Evaluation(services, state["runtime"])
+    state["memory"] = ConversationMemory(services.settings.memory_turns, services.settings.memory_ttl_s)
 
 
 app = FastAPI(title="Ontology-grounded agent lab", version="1.0.0", lifespan=lifespan)
@@ -57,6 +59,10 @@ def runtime() -> AgentRuntime:
 
 def evaluation() -> Evaluation:
     return state["evaluation"]
+
+
+def memory() -> ConversationMemory:
+    return state["memory"]
 
 
 def pick_llm(provider: str | None, model: str | None):
@@ -82,6 +88,8 @@ class RunRequest(LLMChoice):
     description_overrides: dict[str, str] = Field(default_factory=dict)
     max_tool_calls: int | None = Field(default=None, ge=0, le=40)
     tool_timeout_s: float | None = Field(default=None, gt=0, le=120)
+    conversation_id: str | None = Field(default=None, description="Continue this conversation; the agent remembers its earlier turns.")
+    remember: bool = Field(default=True, description="Start (or continue) a conversation so follow-up questions have memory.")
 
 
 class ExecuteRequest(BaseModel):
@@ -136,6 +144,7 @@ def status() -> dict:
     out["llm_providers"] = list(PROVIDERS)
     out["limits"] = {**svc().settings.limits.__dict__, "max_tool_calls": svc().settings.max_tool_calls,
                      "tool_timeout_s": svc().settings.tool_timeout_s}
+    out["memory"] = {"window_turns": memory().max_turns, "ttl_s": memory().ttl_s, "storage": "in process, not persisted"}
     return out
 
 
@@ -306,13 +315,49 @@ def agents_run(body: RunRequest) -> dict:
     check_configs([body.config])
     if not body.question.strip():
         raise HTTPException(400, "Question is empty.")
+    conversation = None
+    if body.conversation_id:
+        conversation = memory().get(body.conversation_id)
+        if conversation is None:
+            raise HTTPException(404, "This conversation has expired or does not exist. Start a new one.")
+        if conversation.config != body.config:
+            raise HTTPException(400, f"Conversation {body.conversation_id} belongs to agent {conversation.config}, not {body.config}.")
+    elif body.remember:
+        conversation = memory().start(body.config)
+    if conversation and not conversation.lock.acquire(blocking=False):
+        raise HTTPException(409, "This conversation is still answering the previous question.")
     try:
-        return runtime().run(body.question.strip(), body.config, llm=pick_llm(body.llm_provider, body.llm_model),
-                             disabled_tools=body.disabled_tools, extra_tools=body.extra_tools,
-                             description_overrides=body.description_overrides, max_tool_calls=body.max_tool_calls,
-                             tool_timeout_s=body.tool_timeout_s)
+        trace = runtime().run(body.question.strip(), body.config, llm=pick_llm(body.llm_provider, body.llm_model),
+                              disabled_tools=body.disabled_tools, extra_tools=body.extra_tools,
+                              description_overrides=body.description_overrides, max_tool_calls=body.max_tool_calls,
+                              tool_timeout_s=body.tool_timeout_s,
+                              history=memory().history(conversation) if conversation else None)
+        turn_messages = trace.pop("_turn_messages")
+        if conversation:
+            if trace["stop_reason"] != "llm_error":  # a failed turn is not remembered
+                memory().remember(conversation, body.question.strip(), turn_messages)
+            trace["conversation"] = memory().describe(conversation)
+        else:
+            trace["conversation"] = None
+        return trace
     except LLMError as exc:
         raise HTTPException(502, str(exc)) from None
+    finally:
+        if conversation:
+            conversation.lock.release()
+
+
+@app.get("/agents/conversations/{conversation_id}")
+def agents_conversation(conversation_id: str) -> dict:
+    conversation = memory().get(conversation_id)
+    if conversation is None:
+        raise HTTPException(404, "This conversation has expired or does not exist.")
+    return memory().describe(conversation)
+
+
+@app.delete("/agents/conversations/{conversation_id}")
+def agents_forget(conversation_id: str) -> dict:
+    return {"forgotten": memory().forget(conversation_id)}
 
 
 # --------------------------------------------------------------- evaluation

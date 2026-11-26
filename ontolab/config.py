@@ -52,4 +52,6 @@ class Settings:
     max_tool_calls: int = field(default_factory=lambda: int(os.environ.get("ONTOLAB_MAX_TOOL_CALLS", "12")))
     tool_timeout_s: float = field(default_factory=lambda: float(os.environ.get("ONTOLAB_TOOL_TIMEOUT_S", "10")))
     run_timeout_s: float = field(default_factory=lambda: float(os.environ.get("ONTOLAB_RUN_TIMEOUT_S", "180")))
+    memory_turns: int = field(default_factory=lambda: int(os.environ.get("ONTOLAB_MEMORY_TURNS", "6")))
+    memory_ttl_s: float = field(default_factory=lambda: float(os.environ.get("ONTOLAB_MEMORY_TTL_S", "3600")))
     limits: Limits = field(default_factory=Limits)

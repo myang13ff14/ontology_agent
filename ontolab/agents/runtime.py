@@ -43,7 +43,13 @@ class AgentRuntime:
     def run(self, question: str, config_key: str, *, llm: LLMClient | None = None,
             disabled_tools: list[str] | None = None, extra_tools: list[str] | None = None,
             description_overrides: dict[str, str] | None = None, max_tool_calls: int | None = None,
-            tool_timeout_s: float | None = None, run_timeout_s: float | None = None) -> dict:
+            tool_timeout_s: float | None = None, run_timeout_s: float | None = None,
+            history: list[dict] | None = None) -> dict:
+        """Answer one question. `history` is earlier turns to replay first (see agents/memory.py).
+
+        The returned trace has a private "_turn_messages" entry: the messages this turn
+        added, for the caller to store as memory. It is not JSON and must not be sent out.
+        """
         if config_key not in CONFIGS:
             raise KeyError(f"Unknown agent configuration '{config_key}'. Valid: {sorted(CONFIGS)}")
         settings, registry = self.services.settings, self.services.registry
@@ -57,7 +63,8 @@ class AgentRuntime:
         system = system_prompt(config, terminology)
 
         started = time.perf_counter()
-        messages: list[dict] = [{"role": "user", "content": question}]
+        history = list(history or [])
+        messages: list[dict] = history + [{"role": "user", "content": question}]
         tool_calls: list[dict] = []
         llm_turns: list[dict] = []
         final_answer, stop_reason, error = "", "answered", None
@@ -140,4 +147,6 @@ class AgentRuntime:
                 "tool_time_ms": round(sum(r["duration_ms"] for r in tool_calls), 1),
             },
             "limits": {"max_tool_calls": max_tool_calls, "run_timeout_s": run_timeout_s},
+            "memory": {"replayed_messages": len(history)},
+            "_turn_messages": messages[len(history):],
         }

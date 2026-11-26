@@ -100,6 +100,7 @@ class Evaluation:
             key, task, repeat = job
             trace = self.runtime.run(task.question, key, llm=llm, disabled_tools=disabled_tools,
                                      description_overrides=description_overrides, max_tool_calls=max_tool_calls)
+            trace.pop("_turn_messages", None)  # benchmark questions are independent: no memory is kept
             extra = terminology_text if CONFIGS[key].uses_terminology_prompt else ""
             scored = scorer.score(task, trace, coverage_rows[(key, task.id)], extra)
             return {**scored, "repeat": repeat, "category": task.category, "complexity": task.complexity,

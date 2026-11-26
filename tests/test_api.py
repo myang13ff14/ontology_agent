@@ -81,3 +81,28 @@ def test_coverage_and_background_evaluation(client):
     detail = client.get(f"/evaluation/runs/{state['run_id']}/trace", params={"task_id": first["task_id"], "config": "A", "repeat": 1}).json()
     assert detail["trace"]["question"] == first["question"]
     assert client.get("/evaluation/runs/nope").status_code == 404
+
+
+def test_conversations_remember_earlier_turns(client):
+    first = client.post("/agents/run", json={"question": "What is the escalation rate?", "config": "A"}).json()
+    conversation = first["conversation"]
+    assert conversation["turn"] == 1 and conversation["remembered_turns"] == 1 and first["memory"]["replayed_messages"] == 0
+    assert "_turn_messages" not in first
+    second = client.post("/agents/run", json={"question": "And the fix on phone rate?", "config": "A",
+                                              "conversation_id": conversation["conversation_id"]}).json()
+    assert second["conversation"]["turn"] == 2 and second["memory"]["replayed_messages"] == conversation["remembered_messages"]
+    assert second["conversation"]["remembered_questions"] == ["What is the escalation rate?", "And the fix on phone rate?"]
+    assert second["metrics"]["tool_call_count"] == len(second["tool_calls"])
+
+    info = client.get(f"/agents/conversations/{conversation['conversation_id']}").json()
+    assert info["turn"] == 2
+    # A conversation belongs to one configuration, and can be forgotten.
+    wrong = client.post("/agents/run", json={"question": "x", "config": "B", "conversation_id": conversation["conversation_id"]})
+    assert wrong.status_code == 400
+    assert client.delete(f"/agents/conversations/{conversation['conversation_id']}").json() == {"forgotten": True}
+    gone = client.post("/agents/run", json={"question": "x", "config": "A", "conversation_id": conversation["conversation_id"]})
+    assert gone.status_code == 404
+    # Memory can be switched off for a single request.
+    stateless = client.post("/agents/run", json={"question": "What is the escalation rate?", "config": "A", "remember": False}).json()
+    assert stateless["conversation"] is None
+    assert client.get("/status").json()["memory"]["window_turns"] == 6

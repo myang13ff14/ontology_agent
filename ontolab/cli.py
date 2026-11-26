@@ -55,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     runtime = AgentRuntime(services, llm)
     if args.command == "ask":
         trace = runtime.run(args.question, args.config)
+        trace.pop("_turn_messages", None)
         for call in trace["tool_calls"]:
             flag = "ok" if call["ok"] else f"ERROR {call['error']['code']}"
             print(f"  [tool {call['index']}] {call['tool']}({json.dumps(call['arguments'], default=str)}) -> {flag}", file=sys.stderr)

@@ -41,7 +41,7 @@ python3 -m venv .venv
 Open **http://localhost:8600**. API documentation is at http://localhost:8600/docs.
 
 ```bash
-.venv/bin/python -m pytest -q                                   # 69 tests, about 4 seconds
+.venv/bin/python -m pytest -q                                   # 74 tests, about 4 seconds
 .venv/bin/python -m ontolab.cli coverage                        # tool coverage, no model needed
 .venv/bin/python -m ontolab.cli ask "What should the agent do after a power reset fails?" --config B
 .venv/bin/python -m ontolab.cli evaluate --split test --repeats 3
@@ -161,6 +161,28 @@ structured tool call, returns results, and repeats until the model answers, the 
 spent, or the time limit is reached. **There is no routing from questions to tools anywhere in the
 code**: the model chooses.
 
+### Conversation memory
+
+Outside the benchmark, an agent remembers its conversation, so you can follow up or answer a
+clarifying question (`ontolab/agents/memory.py`):
+
+- A conversation belongs to one configuration and has an id. `POST /agents/run` starts one and
+  returns `conversation.conversation_id`; send it back to continue.
+- A **turn** is everything one question produced: the question, the model's tool calls, the tool
+  results and the answer. Turns are stored whole, so a remembered tool call always has its result.
+- On the next question the remembered turns are replayed to the model ahead of the new question.
+  It can answer from them without calling tools again.
+- Memory is a **sliding window** of the most recent `ONTOLAB_MEMORY_TURNS` turns (default 6). Older
+  turns are dropped whole and counted; the trace reports how many are remembered and dropped.
+- A turn that failed with a model error is not remembered.
+- Conversations expire after `ONTOLAB_MEMORY_TTL_S` seconds idle (default one hour). Memory lives in
+  the backend process only: nothing is written to disk, and a restart clears it.
+- Send `"remember": false` for a stateless request, or `DELETE /agents/conversations/{id}` to forget.
+
+**Benchmark runs never use memory.** Every benchmark question starts fresh, so results are
+comparable and one question cannot leak into the next. There is no long-term memory across
+conversations and no summarisation of dropped turns.
+
 **Flattened GraphRAG.** One profile per ontology node, precomputed: name, definition, synonyms,
 parents and children, all descendants, direct neighbours, attributes aggregated across descendants,
 values inherited from ancestors, and multi-hop "related knowledge" chains named by the ontology's
@@ -225,8 +247,9 @@ Five sections, plus experiment controls in the sidebar that apply everywhere.
   version, the schema, the semantic view, the terminology mappings, and each node's flattened profile.
 - **Tool Registry**: tools by configuration, descriptions, schemas, capabilities, enable/disable,
   edit a description, run a tool by hand.
-- **Agent Playground**: ask a question of several configurations side by side; final answer, tool
-  trace with arguments and results, generated SQL, traversed subgraph, metrics.
+- **Agent Playground**: ask a question of several configurations side by side, then follow up with
+  each one (each remembers its own conversation); final answer, tool trace with arguments and
+  results, generated SQL, traversed subgraph, metrics, and what is currently in memory.
 - **Coverage Explorer**: what each configuration can reach, direct versus multi-call, per task
   with reasons; disable a tool and coverage updates at once.
 - **Evaluation Dashboard**: run the benchmark, then coverage versus tool-calling accuracy, success
