@@ -17,6 +17,7 @@ import zlib
 
 import numpy as np
 
+from ..llm.http import ssl_context
 from ..text import normalize, tokens
 
 
@@ -73,7 +74,7 @@ class ApiEmbedder:
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
             request = urllib.request.Request(f"{self.base_url}/embeddings", data=body, headers=headers)
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=60, context=ssl_context()) as response:
                 data = json.load(response)["data"]
             vectors += [item["embedding"] for item in sorted(data, key=lambda item: item["index"])]
         out = np.asarray(vectors, dtype=np.float32)

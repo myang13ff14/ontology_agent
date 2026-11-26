@@ -6,6 +6,7 @@
     LLM_API_KEY    key for openai-compatible providers
     ANTHROPIC_API_KEY   key for anthropic
     LLM_TEMPERATURE     optional sampling temperature for openai / local
+    LLM_REASONING_EFFORT  optional reasoning effort for openai / local (some models need 'none' to call tools)
     LLM_EFFORT          optional effort level for anthropic (default medium)
 """
 
@@ -37,7 +38,8 @@ def make_llm(provider: str | None = None, model: str | None = None) -> LLMClient
         default_url = "http://localhost:11434/v1" if provider == "local" else ""
         return OpenAICompatibleClient(model=model, base_url=env.get("LLM_BASE_URL", "").strip() or default_url,
                                       api_key=env.get("LLM_API_KEY", "").strip(), provider=provider,
-                                      temperature=temperature)
+                                      temperature=temperature,
+                                      reasoning_effort=env.get("LLM_REASONING_EFFORT", "").strip() or None)
     raise LLMError(f"Unknown LLM_PROVIDER '{provider}'. Use one of: {', '.join(PROVIDERS)}.")
 
 

@@ -8,6 +8,7 @@ import urllib.error
 import urllib.request
 
 from .base import LLMError, LLMResponse, ToolCall
+from .http import ssl_context
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
@@ -16,12 +17,13 @@ class OpenAICompatibleClient:
     is_mock = False
 
     def __init__(self, model: str, base_url: str = DEFAULT_BASE_URL, api_key: str = "", provider: str = "openai",
-                 temperature: float | None = None, timeout: float = 120.0):
+                 temperature: float | None = None, reasoning_effort: str | None = None, timeout: float = 120.0):
         self.provider = provider
         self.model = model
         self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
         self.api_key = api_key
         self.temperature = temperature
+        self.reasoning_effort = reasoning_effort
         self.timeout = timeout
 
     def complete(self, system: str, messages: list[dict], tools: list[dict]) -> LLMResponse:
@@ -31,6 +33,8 @@ class OpenAICompatibleClient:
                                                                "parameters": t["input_schema"]}} for t in tools]
         if self.temperature is not None:
             body["temperature"] = self.temperature
+        if self.reasoning_effort:
+            body["reasoning_effort"] = self.reasoning_effort
         payload = self._post(body)
         try:
             message = payload["choices"][0]["message"]
@@ -74,7 +78,7 @@ class OpenAICompatibleClient:
         request = urllib.request.Request(f"{self.base_url}/chat/completions", data=json.dumps(body).encode("utf-8"),
                                          headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.urlopen(request, timeout=self.timeout, context=ssl_context()) as response:
                 return json.load(response)
         except urllib.error.HTTPError as exc:
             with exc:
